@@ -340,7 +340,8 @@ function PageCard({ page, pageState, onUpdate, onMoveUp, onMoveDown, isFirst, is
   const markupUrl = pageState?.markupUrl || "";
   const reviewers = pageState?.reviewers || [];
   const priority = pageState?.priority || "none";
-  const borderColor = PRIORITIES[priority]?.color || "#9E9E9E";
+  const finished = pageState?.finished || false;
+  const borderColor = finished ? "#2E7D32" : (PRIORITIES[priority]?.color || "#9E9E9E");
 
   const addReviewer = () => {
     if (!reviewerName.trim()) return;
@@ -383,6 +384,21 @@ function PageCard({ page, pageState, onUpdate, onMoveUp, onMoveDown, isFirst, is
           <PriorityBadge
             priority={priority}
             onChange={(p) => onUpdate({ ...pageState, priority: p })}
+          />
+          <Chip
+            label={finished ? "Finished" : "Active"}
+            size="small"
+            onClick={() => onUpdate({ ...pageState, finished: !finished })}
+            sx={{
+              bgcolor: finished ? "#E8F5E9" : "transparent",
+              color: finished ? "#2E7D32" : "text.secondary",
+              fontWeight: 600,
+              fontSize: 11,
+              height: 24,
+              border: `1px solid ${finished ? "#2E7D32" : "#E0E0E0"}`,
+              cursor: "pointer",
+              "&:hover": { opacity: 0.85 },
+            }}
           />
           <Typography variant="body1" sx={{ fontWeight: 600, mr: 0.5 }}>
             {page.name}
@@ -583,6 +599,8 @@ function SectionGroup({
   isLast,
   searchTerm,
   statusFilter,
+  hideFinished,
+  hideDeferred,
 }) {
   const [expanded, setExpanded] = useState(section.collapsed !== true);
   const [editingDesc, setEditingDesc] = useState(false);
@@ -601,23 +619,35 @@ function SectionGroup({
   // Filter pages
   const filterPage = useCallback(
     (page) => {
+      const ps = pageStates[page.id];
+      // Hide finished pages
+      if (hideFinished && ps?.finished) return false;
+      // Hide deferred priority pages
+      if (hideDeferred && (ps?.priority === "deferred")) return false;
+      // Reviewer status filter
       if (statusFilter && statusFilter !== "all") {
-        const s = pageStates[page.id]?.status || "unreviewed";
-        if (s !== statusFilter) return false;
+        const revs = ps?.reviewers || [];
+        if (statusFilter === "no_reviewers") {
+          if (revs.length > 0) return false;
+        } else {
+          if (!revs.some((r) => r.status === statusFilter)) return false;
+        }
       }
       if (searchTerm) {
         const term = searchTerm.toLowerCase();
-        const note = pageStates[page.id]?.note || "";
+        const note = ps?.note || "";
+        const purpose = ps?.purpose || "";
         if (
           !page.name.toLowerCase().includes(term) &&
           !page.url.toLowerCase().includes(term) &&
-          !note.toLowerCase().includes(term)
+          !note.toLowerCase().includes(term) &&
+          !purpose.toLowerCase().includes(term)
         )
           return false;
       }
       return true;
     },
-    [pageStates, statusFilter, searchTerm]
+    [pageStates, statusFilter, searchTerm, hideFinished, hideDeferred]
   );
 
   // Get ordered pages for a section or subgroup
@@ -640,7 +670,7 @@ function SectionGroup({
     ? section.subgroups.flatMap((sg) => getOrderedPages(sg.pages, sg.id))
     : getOrderedPages(section.pages, section.id);
 
-  if (visiblePages.length === 0 && (searchTerm || statusFilter !== "all")) return null;
+  if (visiblePages.length === 0 && (searchTerm || statusFilter !== "all" || hideFinished || hideDeferred)) return null;
 
   return (
     <Paper variant="outlined" sx={{ mb: 2, overflow: "hidden" }}>
@@ -870,6 +900,8 @@ export default function App() {
   const [customSections, setCustomSections] = useState({ site: [], outreach: [] });
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [hideFinished, setHideFinished] = useState(false);
+  const [hideDeferred, setHideDeferred] = useState(false);
   const [saveStatus, setSaveStatus] = useState("idle"); // idle | saving | saved | error
   const [loaded, setLoaded] = useState(false);
   const [addingSection, setAddingSection] = useState(false);
@@ -1215,23 +1247,57 @@ export default function App() {
             sx={{ flex: 1, minWidth: 200 }}
           />
           <FormControl size="small" sx={{ minWidth: 160 }}>
-            <InputLabel>Status</InputLabel>
+            <InputLabel>Reviewer Status</InputLabel>
             <Select
               value={statusFilter}
-              label="Status"
+              label="Reviewer Status"
               onChange={(e) => setStatusFilter(e.target.value)}
             >
-              <MenuItem value="all">All Statuses</MenuItem>
-              {STATUS_KEYS.map((key) => (
+              <MenuItem value="all">All</MenuItem>
+              <MenuItem value="no_reviewers">
+                <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                  <Box sx={{ width: 10, height: 10, borderRadius: "50%", bgcolor: "#BDBDBD" }} />
+                  No Reviewers
+                </Box>
+              </MenuItem>
+              {REVIEWER_STATUS_KEYS.map((key) => (
                 <MenuItem key={key} value={key}>
                   <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                    <Box sx={{ width: 10, height: 10, borderRadius: "50%", bgcolor: STATUSES[key].color }} />
-                    {STATUSES[key].label}
+                    <Box sx={{ width: 10, height: 10, borderRadius: "50%", bgcolor: REVIEWER_STATUSES[key].color }} />
+                    {REVIEWER_STATUSES[key].label}
                   </Box>
                 </MenuItem>
               ))}
             </Select>
           </FormControl>
+          <Chip
+            label="Hide Finished"
+            size="small"
+            variant={hideFinished ? "filled" : "outlined"}
+            onClick={() => setHideFinished(!hideFinished)}
+            sx={{
+              cursor: "pointer",
+              fontWeight: 600,
+              fontSize: 12,
+              bgcolor: hideFinished ? "#E8F5E9" : "transparent",
+              color: hideFinished ? "#2E7D32" : "text.secondary",
+              border: `1px solid ${hideFinished ? "#2E7D32" : "#E0E0E0"}`,
+            }}
+          />
+          <Chip
+            label="Hide Deferred"
+            size="small"
+            variant={hideDeferred ? "filled" : "outlined"}
+            onClick={() => setHideDeferred(!hideDeferred)}
+            sx={{
+              cursor: "pointer",
+              fontWeight: 600,
+              fontSize: 12,
+              bgcolor: hideDeferred ? "#ECEFF1" : "transparent",
+              color: hideDeferred ? "#78909C" : "text.secondary",
+              border: `1px solid ${hideDeferred ? "#78909C" : "#E0E0E0"}`,
+            }}
+          />
           {saveIndicator}
           <Box sx={{ display: "flex", gap: 1 }}>
             <Button
@@ -1306,6 +1372,8 @@ export default function App() {
           isLast={idx === orderedSections.length - 1}
           searchTerm={searchTerm}
           statusFilter={statusFilter}
+          hideFinished={hideFinished}
+          hideDeferred={hideDeferred}
         />
       ))}
 
