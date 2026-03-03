@@ -20,6 +20,8 @@ import {
   InputAdornment,
   ClickAwayListener,
   Popover,
+  Checkbox,
+  Divider,
 } from "@mui/material";
 import BoltIcon from "@mui/icons-material/Bolt";
 import MemoryIcon from "@mui/icons-material/Memory";
@@ -48,6 +50,7 @@ import CloseIcon from "@mui/icons-material/Close";
 import SortIcon from "@mui/icons-material/Sort";
 import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/Delete";
+import PlaylistAddCheckIcon from "@mui/icons-material/PlaylistAddCheck";
 
 import { STATUSES, STATUS_KEYS } from "./data/statuses";
 import { SITE_SECTIONS } from "./data/siteSections";
@@ -255,6 +258,12 @@ const REVIEWER_STATUSES = {
 };
 const REVIEWER_STATUS_KEYS = Object.keys(REVIEWER_STATUSES);
 
+// --- To-do categories ---
+const TODO_CATEGORIES = {
+  now:    { label: "Now",    color: "#D32F2F", bgColor: "#FFEBEE" },
+  future: { label: "Future", color: "#7B1FA2", bgColor: "#F3E5F5" },
+};
+
 // --- ReviewerRow ---
 function ReviewerRow({ reviewer, onChange, onRemove }) {
   const [notesOpen, setNotesOpen] = useState(false);
@@ -337,11 +346,17 @@ function PageCard({ page, pageState, onUpdate, onMoveUp, onMoveDown, isFirst, is
   const [purposeDraft, setPurposeDraft] = useState("");
   const [addingReviewer, setAddingReviewer] = useState(false);
   const [reviewerName, setReviewerName] = useState("");
+  const [addingTodo, setAddingTodo] = useState(false);
+  const [newTodoText, setNewTodoText] = useState("");
+  const [newTodoCategory, setNewTodoCategory] = useState("now");
+  const [todoFilter, setTodoFilter] = useState("all");
   const markupUrl = pageState?.markupUrl || "";
   const reviewers = pageState?.reviewers || [];
   const priority = pageState?.priority || "none";
   const finished = pageState?.finished || false;
   const borderColor = finished ? "#2E7D32" : (PRIORITIES[priority]?.color || "#9E9E9E");
+  const todos = pageState?.todos || [];
+  const filteredTodos = todoFilter === "all" ? todos : todos.filter((t) => t.category === todoFilter);
 
   const addReviewer = () => {
     if (!reviewerName.trim()) return;
@@ -358,6 +373,22 @@ function PageCard({ page, pageState, onUpdate, onMoveUp, onMoveDown, isFirst, is
 
   const removeReviewer = (idx) => {
     onUpdate({ ...pageState, reviewers: reviewers.filter((_, i) => i !== idx) });
+  };
+
+  const addTodo = () => {
+    if (!newTodoText.trim()) return;
+    const newItem = { id: `todo-${Date.now()}`, text: newTodoText.trim(), done: false, category: newTodoCategory };
+    onUpdate({ ...pageState, todos: [...todos, newItem] });
+    setNewTodoText("");
+  };
+
+  const toggleTodo = (todoId) => {
+    const updated = todos.map((t) => (t.id === todoId ? { ...t, done: !t.done } : t));
+    onUpdate({ ...pageState, todos: updated });
+  };
+
+  const removeTodo = (todoId) => {
+    onUpdate({ ...pageState, todos: todos.filter((t) => t.id !== todoId) });
   };
 
   return (
@@ -575,6 +606,151 @@ function PageCard({ page, pageState, onUpdate, onMoveUp, onMoveDown, isFirst, is
             />
           )}
         </Box>
+
+        {/* To-Dos */}
+        <Divider sx={{ mt: 1.5, ml: 6.5 }} />
+        <Box sx={{ mt: 1, ml: 6.5 }}>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.75 }}>
+            <PlaylistAddCheckIcon sx={{ fontSize: 18, color: "text.secondary" }} />
+            <Typography variant="body2" sx={{ fontWeight: 600, fontSize: 13 }}>
+              To-Dos
+            </Typography>
+            {todos.length > 0 && (
+              <Chip
+                label={`${todos.filter((t) => t.done).length}/${todos.length}`}
+                size="small"
+                variant="outlined"
+                sx={{ fontSize: 11, height: 20 }}
+              />
+            )}
+            <Box sx={{ flex: 1 }} />
+            {todos.length > 0 && (
+              <Box sx={{ display: "flex", gap: 0.5 }}>
+                {["all", "now", "future"].map((cat) => (
+                  <Chip
+                    key={cat}
+                    label={cat === "all" ? "All" : TODO_CATEGORIES[cat].label}
+                    size="small"
+                    variant={todoFilter === cat ? "filled" : "outlined"}
+                    onClick={() => setTodoFilter(cat)}
+                    sx={{
+                      fontSize: 10,
+                      height: 20,
+                      cursor: "pointer",
+                      fontWeight: todoFilter === cat ? 600 : 400,
+                      ...(todoFilter === cat && cat !== "all"
+                        ? {
+                            bgcolor: TODO_CATEGORIES[cat].bgColor,
+                            color: TODO_CATEGORIES[cat].color,
+                            border: `1px solid ${TODO_CATEGORIES[cat].color}`,
+                          }
+                        : {}),
+                    }}
+                  />
+                ))}
+              </Box>
+            )}
+          </Box>
+
+          {/* Todo items */}
+          {filteredTodos.map((todo) => (
+            <Box
+              key={todo.id}
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                gap: 0.5,
+                py: 0.25,
+                pl: 0.5,
+                borderRadius: 1,
+                "&:hover": { bgcolor: "action.hover" },
+              }}
+            >
+              <Checkbox
+                checked={todo.done}
+                onChange={() => toggleTodo(todo.id)}
+                size="small"
+                sx={{ p: 0.25, color: TODO_CATEGORIES[todo.category]?.color || "#9E9E9E" }}
+              />
+              <Typography
+                variant="body2"
+                sx={{
+                  flex: 1,
+                  fontSize: 13,
+                  textDecoration: todo.done ? "line-through" : "none",
+                  color: todo.done ? "text.disabled" : "text.primary",
+                }}
+              >
+                {todo.text}
+              </Typography>
+              <Chip
+                label={TODO_CATEGORIES[todo.category]?.label || "Now"}
+                size="small"
+                sx={{
+                  fontSize: 10,
+                  height: 20,
+                  bgcolor: TODO_CATEGORIES[todo.category]?.bgColor || "#FFEBEE",
+                  color: TODO_CATEGORIES[todo.category]?.color || "#D32F2F",
+                  fontWeight: 600,
+                }}
+              />
+              <IconButton size="small" onClick={() => removeTodo(todo.id)} sx={{ p: 0.25 }}>
+                <CloseIcon sx={{ fontSize: 14 }} />
+              </IconButton>
+            </Box>
+          ))}
+
+          {/* Add todo form */}
+          {addingTodo ? (
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 0.5 }}>
+              <TextField
+                size="small"
+                placeholder="To-do item..."
+                value={newTodoText}
+                onChange={(e) => setNewTodoText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") addTodo();
+                  if (e.key === "Escape") {
+                    setAddingTodo(false);
+                    setNewTodoText("");
+                  }
+                }}
+                autoFocus
+                sx={{ flex: 1, "& .MuiInputBase-input": { fontSize: 13, py: 0.5 } }}
+              />
+              <Chip
+                label={TODO_CATEGORIES[newTodoCategory].label}
+                size="small"
+                onClick={() => setNewTodoCategory(newTodoCategory === "now" ? "future" : "now")}
+                sx={{
+                  cursor: "pointer",
+                  fontSize: 11,
+                  height: 24,
+                  fontWeight: 600,
+                  bgcolor: TODO_CATEGORIES[newTodoCategory].bgColor,
+                  color: TODO_CATEGORIES[newTodoCategory].color,
+                  border: `1px solid ${TODO_CATEGORIES[newTodoCategory].color}`,
+                  "&:hover": { opacity: 0.85 },
+                }}
+              />
+              <Button size="small" variant="contained" onClick={addTodo} disabled={!newTodoText.trim()}>
+                Add
+              </Button>
+              <Button size="small" onClick={() => { setAddingTodo(false); setNewTodoText(""); }}>
+                Cancel
+              </Button>
+            </Box>
+          ) : (
+            <Chip
+              icon={<AddIcon sx={{ fontSize: 14 }} />}
+              label="Add To-Do"
+              size="small"
+              variant="outlined"
+              onClick={() => setAddingTodo(true)}
+              sx={{ mt: 0.5, cursor: "pointer", fontSize: 12, borderStyle: "dashed" }}
+            />
+          )}
+        </Box>
       </Box>
     </Card>
   );
@@ -637,11 +813,13 @@ function SectionGroup({
         const term = searchTerm.toLowerCase();
         const note = ps?.note || "";
         const purpose = ps?.purpose || "";
+        const todoTexts = (ps?.todos || []).map((t) => t.text.toLowerCase()).join(" ");
         if (
           !page.name.toLowerCase().includes(term) &&
           !page.url.toLowerCase().includes(term) &&
           !note.toLowerCase().includes(term) &&
-          !purpose.toLowerCase().includes(term)
+          !purpose.toLowerCase().includes(term) &&
+          !todoTexts.includes(term)
         )
           return false;
       }
