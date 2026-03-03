@@ -19,6 +19,7 @@ import {
   Button,
   InputAdornment,
   ClickAwayListener,
+  Checkbox,
 } from "@mui/material";
 import BoltIcon from "@mui/icons-material/Bolt";
 import MemoryIcon from "@mui/icons-material/Memory";
@@ -41,6 +42,9 @@ import SyncIcon from "@mui/icons-material/Sync";
 import ErrorIcon from "@mui/icons-material/Error";
 import NotesIcon from "@mui/icons-material/Notes";
 import EditIcon from "@mui/icons-material/Edit";
+import SaveIcon from "@mui/icons-material/Save";
+import PersonAddIcon from "@mui/icons-material/PersonAdd";
+import CloseIcon from "@mui/icons-material/Close";
 
 import { STATUSES, STATUS_KEYS } from "./data/statuses";
 import { SITE_SECTIONS } from "./data/siteSections";
@@ -174,10 +178,30 @@ function PageCard({ page, pageState, onUpdate, onMoveUp, onMoveDown, isFirst, is
   const [notesOpen, setNotesOpen] = useState(false);
   const [editingMarkup, setEditingMarkup] = useState(false);
   const [markupDraft, setMarkupDraft] = useState("");
+  const [addingReviewer, setAddingReviewer] = useState(false);
+  const [reviewerName, setReviewerName] = useState("");
   const status = pageState?.status || "unreviewed";
   const note = pageState?.note || "";
   const markupUrl = pageState?.markupUrl || "";
+  const reviewers = pageState?.reviewers || [];
   const borderColor = STATUSES[status]?.color || "#9E9E9E";
+
+  const addReviewer = () => {
+    if (!reviewerName.trim()) return;
+    const newReviewer = { name: reviewerName.trim(), date: new Date().toISOString().slice(0, 10), done: false };
+    onUpdate({ ...pageState, reviewers: [...reviewers, newReviewer] });
+    setReviewerName("");
+    setAddingReviewer(false);
+  };
+
+  const toggleReviewerDone = (idx) => {
+    const updated = reviewers.map((r, i) => (i === idx ? { ...r, done: !r.done } : r));
+    onUpdate({ ...pageState, reviewers: updated });
+  };
+
+  const removeReviewer = (idx) => {
+    onUpdate({ ...pageState, reviewers: reviewers.filter((_, i) => i !== idx) });
+  };
 
   return (
     <Card
@@ -308,6 +332,67 @@ function PageCard({ page, pageState, onUpdate, onMoveUp, onMoveDown, isFirst, is
             sx={{ mt: 1, ml: 6.5, width: "calc(100% - 52px)", "& .MuiInputBase-input": { fontSize: 13 } }}
           />
         </Collapse>
+
+        {/* Reviewers */}
+        <Box sx={{ mt: 1, ml: 6.5 }}>
+          {reviewers.map((r, idx) => (
+            <Box key={idx} sx={{ display: "flex", alignItems: "center", gap: 0.5, mb: 0.25 }}>
+              <Checkbox
+                size="small"
+                checked={r.done}
+                onChange={() => toggleReviewerDone(idx)}
+                sx={{ p: 0.25 }}
+              />
+              <Typography
+                variant="body2"
+                sx={{
+                  fontWeight: 500,
+                  textDecoration: r.done ? "line-through" : "none",
+                  color: r.done ? "text.secondary" : "text.primary",
+                }}
+              >
+                {r.name}
+              </Typography>
+              <Typography variant="caption" color="text.secondary" sx={{ ml: 0.5 }}>
+                {r.date}
+              </Typography>
+              <IconButton size="small" onClick={() => removeReviewer(idx)} sx={{ p: 0.25, ml: 0.5 }}>
+                <CloseIcon sx={{ fontSize: 14 }} />
+              </IconButton>
+            </Box>
+          ))}
+          {addingReviewer ? (
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 0.5 }}>
+              <TextField
+                size="small"
+                placeholder="Your name..."
+                value={reviewerName}
+                onChange={(e) => setReviewerName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") addReviewer();
+                  if (e.key === "Escape") { setAddingReviewer(false); setReviewerName(""); }
+                }}
+                autoFocus
+                sx={{ width: 160, "& .MuiInputBase-input": { fontSize: 13, py: 0.5 } }}
+              />
+              <Button size="small" variant="contained" onClick={addReviewer} disabled={!reviewerName.trim()}>
+                Add
+              </Button>
+              <Button size="small" onClick={() => { setAddingReviewer(false); setReviewerName(""); }}>
+                Cancel
+              </Button>
+            </Box>
+          ) : (
+            <Chip
+              icon={<PersonAddIcon sx={{ fontSize: 14 }} />}
+              label="Add Reviewer"
+              size="small"
+              variant="outlined"
+              onClick={() => setAddingReviewer(true)}
+              sx={{ mt: 0.5, cursor: "pointer", fontSize: 12 }}
+            />
+          )}
+        </Box>
       </Box>
     </Card>
   );
@@ -624,6 +709,12 @@ export default function App() {
     [sectionOrder]
   );
 
+  // --- Manual save ---
+  const handleManualSave = useCallback(() => {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveToKV(pageStates, sectionOrder, pageOrder);
+  }, [pageStates, sectionOrder, pageOrder, saveToKV]);
+
   // --- Backup / Restore ---
   const handleBackup = () => {
     window.open("/api/backup", "_blank");
@@ -718,6 +809,15 @@ export default function App() {
           </FormControl>
           {saveIndicator}
           <Box sx={{ display: "flex", gap: 1 }}>
+            <Button
+              variant="contained"
+              size="small"
+              startIcon={<SaveIcon />}
+              onClick={handleManualSave}
+              disabled={saveStatus === "saving"}
+            >
+              Save
+            </Button>
             <Button
               variant="outlined"
               size="small"
