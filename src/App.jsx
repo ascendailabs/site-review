@@ -19,6 +19,7 @@ import {
   Button,
   InputAdornment,
   ClickAwayListener,
+  Popover,
 } from "@mui/material";
 import BoltIcon from "@mui/icons-material/Bolt";
 import MemoryIcon from "@mui/icons-material/Memory";
@@ -184,15 +185,15 @@ function StatusBadge({ status, onChange }) {
 
 // --- PriorityBadge ---
 function PriorityBadge({ priority, onChange }) {
-  const [open, setOpen] = useState(false);
+  const [anchorEl, setAnchorEl] = useState(null);
   const p = PRIORITIES[priority] || PRIORITIES.none;
 
   return (
-    <Box sx={{ position: "relative", display: "inline-block" }}>
+    <>
       <Chip
         label={p.label}
         size="small"
-        onClick={() => setOpen(!open)}
+        onClick={(e) => setAnchorEl(e.currentTarget)}
         sx={{
           bgcolor: p.bgColor,
           color: p.color,
@@ -204,49 +205,41 @@ function PriorityBadge({ priority, onChange }) {
           "&:hover": { opacity: 0.85 },
         }}
       />
-      {open && (
-        <ClickAwayListener onClickAway={() => setOpen(false)}>
-          <Paper
-            elevation={4}
+      <Popover
+        open={Boolean(anchorEl)}
+        anchorEl={anchorEl}
+        onClose={() => setAnchorEl(null)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
+        transformOrigin={{ vertical: "top", horizontal: "left" }}
+        slotProps={{ paper: { sx: { minWidth: 140, p: 0.5, mt: 0.5 } } }}
+      >
+        {PRIORITY_KEYS.map((key) => (
+          <Box
+            key={key}
+            onClick={() => {
+              onChange(key);
+              setAnchorEl(null);
+            }}
             sx={{
-              position: "absolute",
-              left: 0,
-              top: "100%",
-              mt: 0.5,
-              zIndex: 10,
-              minWidth: 140,
-              p: 0.5,
+              display: "flex",
+              alignItems: "center",
+              gap: 1,
+              px: 1.5,
+              py: 0.75,
+              borderRadius: 1,
+              cursor: "pointer",
+              bgcolor: priority === key ? PRIORITIES[key].bgColor : "transparent",
+              "&:hover": { bgcolor: PRIORITIES[key].bgColor },
             }}
           >
-            {PRIORITY_KEYS.map((key) => (
-              <Box
-                key={key}
-                onClick={() => {
-                  onChange(key);
-                  setOpen(false);
-                }}
-                sx={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 1,
-                  px: 1.5,
-                  py: 0.75,
-                  borderRadius: 1,
-                  cursor: "pointer",
-                  bgcolor: priority === key ? PRIORITIES[key].bgColor : "transparent",
-                  "&:hover": { bgcolor: PRIORITIES[key].bgColor },
-                }}
-              >
-                <Box sx={{ width: 10, height: 10, borderRadius: "50%", bgcolor: PRIORITIES[key].color }} />
-                <Typography variant="body2" sx={{ fontWeight: priority === key ? 600 : 400 }}>
-                  {PRIORITIES[key].label}
-                </Typography>
-              </Box>
-            ))}
-          </Paper>
-        </ClickAwayListener>
-      )}
-    </Box>
+            <Box sx={{ width: 10, height: 10, borderRadius: "50%", bgcolor: PRIORITIES[key].color }} />
+            <Typography variant="body2" sx={{ fontWeight: priority === key ? 600 : 400 }}>
+              {PRIORITIES[key].label}
+            </Typography>
+          </Box>
+        ))}
+      </Popover>
+    </>
   );
 }
 
@@ -263,7 +256,7 @@ const REVIEWER_STATUS_KEYS = Object.keys(REVIEWER_STATUSES);
 // --- ReviewerRow ---
 function ReviewerRow({ reviewer, onChange, onRemove }) {
   const [notesOpen, setNotesOpen] = useState(false);
-  const [statusOpen, setStatusOpen] = useState(false);
+  const [anchorEl, setAnchorEl] = useState(null);
   const rs = REVIEWER_STATUSES[reviewer.status] || REVIEWER_STATUSES.pending;
 
   return (
@@ -276,43 +269,44 @@ function ReviewerRow({ reviewer, onChange, onRemove }) {
           <NotesIcon sx={{ fontSize: 16 }} />
         </IconButton>
         {/* Status picker */}
-        <Box sx={{ position: "relative", display: "inline-block" }}>
-          <Chip
-            label={rs.label}
-            size="small"
-            onClick={() => setStatusOpen(!statusOpen)}
-            sx={{
-              bgcolor: rs.bgColor,
-              color: rs.color,
-              fontWeight: 600,
-              border: `1px solid ${rs.color}`,
-              cursor: "pointer",
-              fontSize: 11,
-              height: 24,
-              "&:hover": { opacity: 0.85 },
-            }}
-          />
-          {statusOpen && (
-            <ClickAwayListener onClickAway={() => setStatusOpen(false)}>
-              <Paper elevation={4} sx={{ position: "absolute", right: 0, top: "100%", mt: 0.5, zIndex: 10, minWidth: 150, p: 0.5 }}>
-                {REVIEWER_STATUS_KEYS.map((key) => (
-                  <Box
-                    key={key}
-                    onClick={() => { onChange({ ...reviewer, status: key }); setStatusOpen(false); }}
-                    sx={{
-                      display: "flex", alignItems: "center", gap: 1, px: 1.5, py: 0.75, borderRadius: 1, cursor: "pointer",
-                      bgcolor: reviewer.status === key ? REVIEWER_STATUSES[key].bgColor : "transparent",
-                      "&:hover": { bgcolor: REVIEWER_STATUSES[key].bgColor },
-                    }}
-                  >
-                    <Box sx={{ width: 10, height: 10, borderRadius: "50%", bgcolor: REVIEWER_STATUSES[key].color }} />
-                    <Typography variant="body2" sx={{ fontWeight: reviewer.status === key ? 600 : 400 }}>{REVIEWER_STATUSES[key].label}</Typography>
-                  </Box>
-                ))}
-              </Paper>
-            </ClickAwayListener>
-          )}
-        </Box>
+        <Chip
+          label={rs.label}
+          size="small"
+          onClick={(e) => setAnchorEl(e.currentTarget)}
+          sx={{
+            bgcolor: rs.bgColor,
+            color: rs.color,
+            fontWeight: 600,
+            border: `1px solid ${rs.color}`,
+            cursor: "pointer",
+            fontSize: 11,
+            height: 24,
+            "&:hover": { opacity: 0.85 },
+          }}
+        />
+        <Popover
+          open={Boolean(anchorEl)}
+          anchorEl={anchorEl}
+          onClose={() => setAnchorEl(null)}
+          anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+          transformOrigin={{ vertical: "top", horizontal: "right" }}
+          slotProps={{ paper: { sx: { minWidth: 150, p: 0.5, mt: 0.5 } } }}
+        >
+          {REVIEWER_STATUS_KEYS.map((key) => (
+            <Box
+              key={key}
+              onClick={() => { onChange({ ...reviewer, status: key }); setAnchorEl(null); }}
+              sx={{
+                display: "flex", alignItems: "center", gap: 1, px: 1.5, py: 0.75, borderRadius: 1, cursor: "pointer",
+                bgcolor: reviewer.status === key ? REVIEWER_STATUSES[key].bgColor : "transparent",
+                "&:hover": { bgcolor: REVIEWER_STATUSES[key].bgColor },
+              }}
+            >
+              <Box sx={{ width: 10, height: 10, borderRadius: "50%", bgcolor: REVIEWER_STATUSES[key].color }} />
+              <Typography variant="body2" sx={{ fontWeight: reviewer.status === key ? 600 : 400 }}>{REVIEWER_STATUSES[key].label}</Typography>
+            </Box>
+          ))}
+        </Popover>
         <IconButton size="small" onClick={onRemove} sx={{ p: 0.25 }}>
           <CloseIcon sx={{ fontSize: 14 }} />
         </IconButton>
