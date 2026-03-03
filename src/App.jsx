@@ -248,7 +248,7 @@ const REVIEWER_STATUSES = {
   pending:    { label: "Pending",    color: "#9E9E9E", bgColor: "#F5F5F5" },
   critical:   { label: "Critical",   color: "#D32F2F", bgColor: "#FFEBEE" },
   needs_work: { label: "Needs Work", color: "#F57C00", bgColor: "#FFF3E0" },
-  looks_good: { label: "Looks Good", color: "#1976D2", bgColor: "#E3F2FD" },
+  updated:    { label: "Updated",    color: "#1976D2", bgColor: "#E3F2FD" },
   approved:   { label: "Approved",   color: "#2E7D32", bgColor: "#E8F5E9" },
 };
 const REVIEWER_STATUS_KEYS = Object.keys(REVIEWER_STATUSES);
@@ -531,7 +531,7 @@ function SectionGroup({
 
   const reviewedCount = allPages.filter((p) => {
     const revs = pageStates[p.id]?.reviewers || [];
-    return revs.length > 0 && revs.every((r) => r.status === "approved" || r.status === "looks_good");
+    return revs.length > 0 && revs.every((r) => r.status === "approved" || r.status === "updated");
   }).length;
 
   // Filter pages
