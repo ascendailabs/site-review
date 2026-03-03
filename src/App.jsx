@@ -19,7 +19,6 @@ import {
   Button,
   InputAdornment,
   ClickAwayListener,
-  Checkbox,
 } from "@mui/material";
 import BoltIcon from "@mui/icons-material/Bolt";
 import MemoryIcon from "@mui/icons-material/Memory";
@@ -251,15 +250,95 @@ function PriorityBadge({ priority, onChange }) {
   );
 }
 
+// --- Reviewer statuses (subset used per-reviewer) ---
+const REVIEWER_STATUSES = {
+  pending:    { label: "Pending",    color: "#9E9E9E", bgColor: "#F5F5F5" },
+  critical:   { label: "Critical",   color: "#D32F2F", bgColor: "#FFEBEE" },
+  needs_work: { label: "Needs Work", color: "#F57C00", bgColor: "#FFF3E0" },
+  looks_good: { label: "Looks Good", color: "#1976D2", bgColor: "#E3F2FD" },
+  approved:   { label: "Approved",   color: "#2E7D32", bgColor: "#E8F5E9" },
+};
+const REVIEWER_STATUS_KEYS = Object.keys(REVIEWER_STATUSES);
+
+// --- ReviewerRow ---
+function ReviewerRow({ reviewer, onChange, onRemove }) {
+  const [notesOpen, setNotesOpen] = useState(false);
+  const [statusOpen, setStatusOpen] = useState(false);
+  const rs = REVIEWER_STATUSES[reviewer.status] || REVIEWER_STATUSES.pending;
+
+  return (
+    <Box sx={{ mb: 1, pl: 1, borderLeft: `3px solid ${rs.color}`, borderRadius: 1 }}>
+      <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
+        <Typography variant="body2" sx={{ fontWeight: 600 }}>{reviewer.name}</Typography>
+        <Typography variant="caption" color="text.secondary">{reviewer.date}</Typography>
+        <Box sx={{ flex: 1 }} />
+        <IconButton size="small" onClick={() => setNotesOpen(!notesOpen)} sx={{ p: 0.25, color: reviewer.note ? "primary.main" : "text.secondary" }}>
+          <NotesIcon sx={{ fontSize: 16 }} />
+        </IconButton>
+        {/* Status picker */}
+        <Box sx={{ position: "relative", display: "inline-block" }}>
+          <Chip
+            label={rs.label}
+            size="small"
+            onClick={() => setStatusOpen(!statusOpen)}
+            sx={{
+              bgcolor: rs.bgColor,
+              color: rs.color,
+              fontWeight: 600,
+              border: `1px solid ${rs.color}`,
+              cursor: "pointer",
+              fontSize: 11,
+              height: 24,
+              "&:hover": { opacity: 0.85 },
+            }}
+          />
+          {statusOpen && (
+            <ClickAwayListener onClickAway={() => setStatusOpen(false)}>
+              <Paper elevation={4} sx={{ position: "absolute", right: 0, top: "100%", mt: 0.5, zIndex: 10, minWidth: 150, p: 0.5 }}>
+                {REVIEWER_STATUS_KEYS.map((key) => (
+                  <Box
+                    key={key}
+                    onClick={() => { onChange({ ...reviewer, status: key }); setStatusOpen(false); }}
+                    sx={{
+                      display: "flex", alignItems: "center", gap: 1, px: 1.5, py: 0.75, borderRadius: 1, cursor: "pointer",
+                      bgcolor: reviewer.status === key ? REVIEWER_STATUSES[key].bgColor : "transparent",
+                      "&:hover": { bgcolor: REVIEWER_STATUSES[key].bgColor },
+                    }}
+                  >
+                    <Box sx={{ width: 10, height: 10, borderRadius: "50%", bgcolor: REVIEWER_STATUSES[key].color }} />
+                    <Typography variant="body2" sx={{ fontWeight: reviewer.status === key ? 600 : 400 }}>{REVIEWER_STATUSES[key].label}</Typography>
+                  </Box>
+                ))}
+              </Paper>
+            </ClickAwayListener>
+          )}
+        </Box>
+        <IconButton size="small" onClick={onRemove} sx={{ p: 0.25 }}>
+          <CloseIcon sx={{ fontSize: 14 }} />
+        </IconButton>
+      </Box>
+      <Collapse in={notesOpen}>
+        <TextField
+          multiline
+          minRows={1}
+          maxRows={4}
+          fullWidth
+          placeholder={`${reviewer.name}'s notes...`}
+          value={reviewer.note || ""}
+          onChange={(e) => onChange({ ...reviewer, note: e.target.value })}
+          sx={{ mt: 0.5, "& .MuiInputBase-input": { fontSize: 13 } }}
+        />
+      </Collapse>
+    </Box>
+  );
+}
+
 // --- PageCard ---
 function PageCard({ page, pageState, onUpdate, onMoveUp, onMoveDown, isFirst, isLast }) {
-  const [notesOpen, setNotesOpen] = useState(false);
   const [editingMarkup, setEditingMarkup] = useState(false);
   const [markupDraft, setMarkupDraft] = useState("");
   const [addingReviewer, setAddingReviewer] = useState(false);
   const [reviewerName, setReviewerName] = useState("");
-  const status = pageState?.status || "unreviewed";
-  const note = pageState?.note || "";
   const markupUrl = pageState?.markupUrl || "";
   const reviewers = pageState?.reviewers || [];
   const priority = pageState?.priority || "none";
@@ -267,15 +346,15 @@ function PageCard({ page, pageState, onUpdate, onMoveUp, onMoveDown, isFirst, is
 
   const addReviewer = () => {
     if (!reviewerName.trim()) return;
-    const newReviewer = { name: reviewerName.trim(), date: new Date().toISOString().slice(0, 10), done: false };
+    const newReviewer = { name: reviewerName.trim(), date: new Date().toISOString().slice(0, 10), status: "pending", note: "" };
     onUpdate({ ...pageState, reviewers: [...reviewers, newReviewer] });
     setReviewerName("");
     setAddingReviewer(false);
   };
 
-  const toggleReviewerDone = (idx) => {
-    const updated = reviewers.map((r, i) => (i === idx ? { ...r, done: !r.done } : r));
-    onUpdate({ ...pageState, reviewers: updated });
+  const updateReviewer = (idx, updated) => {
+    const newReviewers = reviewers.map((r, i) => (i === idx ? updated : r));
+    onUpdate({ ...pageState, reviewers: newReviewers });
   };
 
   const removeReviewer = (idx) => {
@@ -327,18 +406,6 @@ function PageCard({ page, pageState, onUpdate, onMoveUp, onMoveDown, isFirst, is
               <Chip label="Handoff" size="small" sx={{ bgcolor: "#F3E5F5", color: "#7B1FA2", fontWeight: 600 }} />
             </Tooltip>
           )}
-          <Box sx={{ flex: 1 }} />
-          <IconButton
-            size="small"
-            onClick={() => setNotesOpen(!notesOpen)}
-            sx={{ color: note ? "primary.main" : "text.secondary" }}
-          >
-            <NotesIcon fontSize="small" />
-          </IconButton>
-          <StatusBadge
-            status={status}
-            onChange={(newStatus) => onUpdate({ ...pageState, status: newStatus })}
-          />
         </Box>
 
         {/* Markup.io row */}
@@ -402,47 +469,15 @@ function PageCard({ page, pageState, onUpdate, onMoveUp, onMoveDown, isFirst, is
           )}
         </Box>
 
-        {/* Notes */}
-        <Collapse in={notesOpen}>
-          <TextField
-            multiline
-            minRows={2}
-            maxRows={6}
-            fullWidth
-            placeholder="Add notes..."
-            value={note}
-            onChange={(e) => onUpdate({ ...pageState, note: e.target.value })}
-            sx={{ mt: 1, ml: 6.5, width: "calc(100% - 52px)", "& .MuiInputBase-input": { fontSize: 13 } }}
-          />
-        </Collapse>
-
         {/* Reviewers */}
-        <Box sx={{ mt: 1, ml: 6.5 }}>
+        <Box sx={{ mt: 1.5, ml: 6.5 }}>
           {reviewers.map((r, idx) => (
-            <Box key={idx} sx={{ display: "flex", alignItems: "center", gap: 0.5, mb: 0.25 }}>
-              <Checkbox
-                size="small"
-                checked={r.done}
-                onChange={() => toggleReviewerDone(idx)}
-                sx={{ p: 0.25 }}
-              />
-              <Typography
-                variant="body2"
-                sx={{
-                  fontWeight: 500,
-                  textDecoration: r.done ? "line-through" : "none",
-                  color: r.done ? "text.secondary" : "text.primary",
-                }}
-              >
-                {r.name}
-              </Typography>
-              <Typography variant="caption" color="text.secondary" sx={{ ml: 0.5 }}>
-                {r.date}
-              </Typography>
-              <IconButton size="small" onClick={() => removeReviewer(idx)} sx={{ p: 0.25, ml: 0.5 }}>
-                <CloseIcon sx={{ fontSize: 14 }} />
-              </IconButton>
-            </Box>
+            <ReviewerRow
+              key={idx}
+              reviewer={r}
+              onChange={(updated) => updateReviewer(idx, updated)}
+              onRemove={() => removeReviewer(idx)}
+            />
           ))}
           {addingReviewer ? (
             <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 0.5 }}>
@@ -501,8 +536,8 @@ function SectionGroup({
   const allPages = getSectionPages(section);
 
   const reviewedCount = allPages.filter((p) => {
-    const s = pageStates[p.id]?.status || "unreviewed";
-    return s !== "unreviewed";
+    const revs = pageStates[p.id]?.reviewers || [];
+    return revs.length > 0 && revs.every((r) => r.status === "approved" || r.status === "looks_good");
   }).length;
 
   // Filter pages
