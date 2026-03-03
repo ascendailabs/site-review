@@ -46,6 +46,8 @@ import SaveIcon from "@mui/icons-material/Save";
 import PersonAddIcon from "@mui/icons-material/PersonAdd";
 import CloseIcon from "@mui/icons-material/Close";
 import SortIcon from "@mui/icons-material/Sort";
+import AddIcon from "@mui/icons-material/Add";
+import DeleteIcon from "@mui/icons-material/Delete";
 
 import { STATUSES, STATUS_KEYS } from "./data/statuses";
 import { SITE_SECTIONS } from "./data/siteSections";
@@ -328,7 +330,7 @@ function ReviewerRow({ reviewer, onChange, onRemove }) {
 }
 
 // --- PageCard ---
-function PageCard({ page, pageState, onUpdate, onMoveUp, onMoveDown, isFirst, isLast }) {
+function PageCard({ page, pageState, onUpdate, onMoveUp, onMoveDown, isFirst, isLast, onRemove }) {
   const [editingMarkup, setEditingMarkup] = useState(false);
   const [markupDraft, setMarkupDraft] = useState("");
   const [editingPurpose, setEditingPurpose] = useState(false);
@@ -400,6 +402,13 @@ function PageCard({ page, pageState, onUpdate, onMoveUp, onMoveDown, isFirst, is
           {page.handoff && (
             <Tooltip title={page.handoff} arrow>
               <Chip label="Handoff" size="small" sx={{ bgcolor: "#F3E5F5", color: "#7B1FA2", fontWeight: 600 }} />
+            </Tooltip>
+          )}
+          {onRemove && (
+            <Tooltip title="Delete page">
+              <IconButton size="small" onClick={onRemove} sx={{ p: 0.25, color: "text.secondary", "&:hover": { color: "#D32F2F" } }}>
+                <DeleteIcon sx={{ fontSize: 16 }} />
+              </IconButton>
             </Tooltip>
           )}
         </Box>
@@ -564,6 +573,9 @@ function SectionGroup({
   onReorderPage,
   sectionMeta,
   onUpdateSectionMeta,
+  onAddPage,
+  onRemovePage,
+  onRemoveSection,
   onSortByPriority,
   onMoveUp,
   onMoveDown,
@@ -575,6 +587,9 @@ function SectionGroup({
   const [expanded, setExpanded] = useState(section.collapsed !== true);
   const [editingDesc, setEditingDesc] = useState(false);
   const [descDraft, setDescDraft] = useState("");
+  const [addingPage, setAddingPage] = useState(false);
+  const [newPageName, setNewPageName] = useState("");
+  const [newPageUrl, setNewPageUrl] = useState("");
   const IconComponent = ICON_MAP[section.icon] || BoltIcon;
   const allPages = getSectionPages(section);
 
@@ -723,6 +738,20 @@ function SectionGroup({
             <SortIcon fontSize="small" />
           </IconButton>
         </Tooltip>
+        {onRemoveSection && (
+          <Tooltip title="Delete section">
+            <IconButton
+              size="small"
+              onClick={(e) => {
+                e.stopPropagation();
+                onRemoveSection();
+              }}
+              sx={{ p: 0.5, color: "text.secondary", "&:hover": { color: "#D32F2F" } }}
+            >
+              <DeleteIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        )}
         {expanded ? <ExpandLessIcon /> : <ExpandMoreIcon />}
       </Box>
 
@@ -753,6 +782,7 @@ function SectionGroup({
                         onMoveDown={() => onReorderPage(sg.id, page.id, 1)}
                         isFirst={idx === 0}
                         isLast={idx === orderedPages.length - 1}
+                        onRemove={page.id.startsWith("custom-pg-") ? () => onRemovePage(page.id) : undefined}
                       />
                     ))}
                   </Box>
@@ -768,8 +798,62 @@ function SectionGroup({
                   onMoveDown={() => onReorderPage(section.id, page.id, 1)}
                   isFirst={idx === 0}
                   isLast={idx === visiblePages.length - 1}
+                  onRemove={page.id.startsWith("custom-pg-") ? () => onRemovePage(page.id) : undefined}
                 />
               ))}
+          {/* Add Page */}
+          {addingPage ? (
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 1 }}>
+              <TextField
+                size="small"
+                placeholder="Page name..."
+                value={newPageName}
+                onChange={(e) => setNewPageName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") { setAddingPage(false); setNewPageName(""); setNewPageUrl(""); }
+                }}
+                autoFocus
+                sx={{ flex: 1, "& .MuiInputBase-input": { fontSize: 13, py: 0.5 } }}
+              />
+              <TextField
+                size="small"
+                placeholder="URL..."
+                value={newPageUrl}
+                onChange={(e) => setNewPageUrl(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && newPageName.trim() && newPageUrl.trim()) {
+                    onAddPage(newPageName.trim(), newPageUrl.trim());
+                    setNewPageName(""); setNewPageUrl(""); setAddingPage(false);
+                  }
+                  if (e.key === "Escape") { setAddingPage(false); setNewPageName(""); setNewPageUrl(""); }
+                }}
+                sx={{ flex: 1, "& .MuiInputBase-input": { fontSize: 13, py: 0.5 } }}
+              />
+              <Button
+                size="small"
+                variant="contained"
+                disabled={!newPageName.trim() || !newPageUrl.trim()}
+                onClick={() => {
+                  onAddPage(newPageName.trim(), newPageUrl.trim());
+                  setNewPageName(""); setNewPageUrl(""); setAddingPage(false);
+                }}
+              >
+                Add
+              </Button>
+              <Button size="small" onClick={() => { setAddingPage(false); setNewPageName(""); setNewPageUrl(""); }}>
+                Cancel
+              </Button>
+            </Box>
+          ) : (
+            <Chip
+              icon={<AddIcon sx={{ fontSize: 14 }} />}
+              label="Add Page"
+              size="small"
+              variant="outlined"
+              onClick={() => setAddingPage(true)}
+              sx={{ mt: 1, cursor: "pointer", fontSize: 12, borderStyle: "dashed" }}
+            />
+          )}
         </Box>
       </Collapse>
     </Paper>
@@ -783,10 +867,14 @@ export default function App() {
   const [sectionOrder, setSectionOrder] = useState({ site: [], outreach: [] });
   const [pageOrder, setPageOrder] = useState({});
   const [sectionMeta, setSectionMeta] = useState({});
+  const [customSections, setCustomSections] = useState({ site: [], outreach: [] });
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [saveStatus, setSaveStatus] = useState("idle"); // idle | saving | saved | error
   const [loaded, setLoaded] = useState(false);
+  const [addingSection, setAddingSection] = useState(false);
+  const [newSectionName, setNewSectionName] = useState("");
+  const [newSectionIcon, setNewSectionIcon] = useState("Bolt");
 
   const saveTimer = useRef(null);
   const skipNextSave = useRef(false);
@@ -810,6 +898,9 @@ export default function App() {
         if (data.sectionMeta) {
           setSectionMeta(data.sectionMeta);
         }
+        if (data.customSections) {
+          setCustomSections(data.customSections);
+        }
         skipNextSave.current = true;
       } catch (err) {
         console.error("Failed to load state:", err);
@@ -820,13 +911,13 @@ export default function App() {
   }, []);
 
   // --- Auto-save with debounce ---
-  const saveToKV = useCallback(async (ps, so, po, sm) => {
+  const saveToKV = useCallback(async (ps, so, po, sm, cs) => {
     setSaveStatus("saving");
     try {
       const res = await fetch("/api/state", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pageStates: ps, sectionOrder: so, pageOrder: po, sectionMeta: sm }),
+        body: JSON.stringify({ pageStates: ps, sectionOrder: so, pageOrder: po, sectionMeta: sm, customSections: cs }),
       });
       if (res.ok) {
         setSaveStatus("saved");
@@ -846,10 +937,10 @@ export default function App() {
     }
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      saveToKV(pageStates, sectionOrder, pageOrder, sectionMeta);
+      saveToKV(pageStates, sectionOrder, pageOrder, sectionMeta, customSections);
     }, 2000);
     return () => clearTimeout(saveTimer.current);
-  }, [pageStates, sectionOrder, pageOrder, sectionMeta, loaded, saveToKV]);
+  }, [pageStates, sectionOrder, pageOrder, sectionMeta, customSections, loaded, saveToKV]);
 
   // --- Update section metadata ---
   const updateSectionMeta = useCallback((sectionId, meta) => {
@@ -858,6 +949,66 @@ export default function App() {
       [sectionId]: { ...prev[sectionId], ...meta },
     }));
   }, []);
+
+  // --- Custom section CRUD ---
+  const addCustomSection = useCallback(
+    (tk, name, icon) => {
+      const newSection = {
+        id: `custom-sec-${Date.now()}`,
+        group: name,
+        icon: icon || "Bolt",
+        description: "",
+        pages: [],
+      };
+      setCustomSections((prev) => ({
+        ...prev,
+        [tk]: [...(prev[tk] || []), newSection],
+      }));
+    },
+    []
+  );
+
+  const removeCustomSection = useCallback(
+    (tk, sectionId) => {
+      setCustomSections((prev) => ({
+        ...prev,
+        [tk]: (prev[tk] || []).filter((s) => s.id !== sectionId),
+      }));
+    },
+    []
+  );
+
+  // --- Custom page CRUD ---
+  const addCustomPage = useCallback(
+    (sectionId, name, url) => {
+      const newPage = {
+        id: `custom-pg-${Date.now()}`,
+        name,
+        url,
+      };
+      setSectionMeta((prev) => ({
+        ...prev,
+        [sectionId]: {
+          ...prev[sectionId],
+          customPages: [...(prev[sectionId]?.customPages || []), newPage],
+        },
+      }));
+    },
+    []
+  );
+
+  const removeCustomPage = useCallback(
+    (sectionId, pageId) => {
+      setSectionMeta((prev) => ({
+        ...prev,
+        [sectionId]: {
+          ...prev[sectionId],
+          customPages: (prev[sectionId]?.customPages || []).filter((p) => p.id !== pageId),
+        },
+      }));
+    },
+    []
+  );
 
   // --- Update a page's state ---
   const updatePageState = useCallback((pageId, state) => {
@@ -870,7 +1021,9 @@ export default function App() {
   // --- Reorder sections ---
   const reorderSection = useCallback(
     (tabKey, sectionId, direction) => {
-      const sections = tabKey === "site" ? SITE_SECTIONS : OUTREACH_SECTIONS;
+      const staticSections = tabKey === "site" ? SITE_SECTIONS : OUTREACH_SECTIONS;
+      const custom = customSections[tabKey] || [];
+      const sections = [...staticSections, ...custom];
       const currentOrder = sectionOrder[tabKey]?.length
         ? sectionOrder[tabKey]
         : sections.map((s) => s.id);
@@ -882,7 +1035,7 @@ export default function App() {
       [newOrder[idx], newOrder[newIdx]] = [newOrder[newIdx], newOrder[idx]];
       setSectionOrder((prev) => ({ ...prev, [tabKey]: newOrder }));
     },
-    [sectionOrder]
+    [sectionOrder, customSections]
   );
 
   // --- Reorder pages within a section ---
@@ -890,10 +1043,12 @@ export default function App() {
     (sectionKey, pageId, direction) => {
       // Get current page list from the section data
       let defaultPages = [];
-      const allSections = [...SITE_SECTIONS, ...OUTREACH_SECTIONS];
+      const allSections = [...SITE_SECTIONS, ...OUTREACH_SECTIONS, ...(customSections.site || []), ...(customSections.outreach || [])];
       for (const s of allSections) {
         if (s.id === sectionKey) {
-          defaultPages = s.pages?.map((p) => p.id) || [];
+          const staticIds = s.pages?.map((p) => p.id) || [];
+          const customIds = (sectionMeta[s.id]?.customPages || []).map((p) => p.id);
+          defaultPages = [...staticIds, ...customIds];
           break;
         }
         if (s.subgroups) {
@@ -915,7 +1070,7 @@ export default function App() {
       [newOrder[idx], newOrder[newIdx]] = [newOrder[newIdx], newOrder[idx]];
       setPageOrder((prev) => ({ ...prev, [sectionKey]: newOrder }));
     },
-    [pageOrder]
+    [pageOrder, customSections, sectionMeta]
   );
 
   // --- Sort pages by priority within a section ---
@@ -943,7 +1098,9 @@ export default function App() {
   // --- Get ordered sections for a tab ---
   const getOrderedSections = useCallback(
     (tabKey) => {
-      const sections = tabKey === "site" ? SITE_SECTIONS : OUTREACH_SECTIONS;
+      const staticSections = tabKey === "site" ? SITE_SECTIONS : OUTREACH_SECTIONS;
+      const custom = customSections[tabKey] || [];
+      const sections = [...staticSections, ...custom];
       const order = sectionOrder[tabKey];
       if (!order || order.length === 0) return sections;
       const sectionMap = Object.fromEntries(sections.map((s) => [s.id, s]));
@@ -951,14 +1108,14 @@ export default function App() {
       const remaining = sections.filter((s) => !order.includes(s.id));
       return [...ordered, ...remaining];
     },
-    [sectionOrder]
+    [sectionOrder, customSections]
   );
 
   // --- Manual save ---
   const handleManualSave = useCallback(() => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveToKV(pageStates, sectionOrder, pageOrder, sectionMeta);
-  }, [pageStates, sectionOrder, pageOrder, sectionMeta, saveToKV]);
+    saveToKV(pageStates, sectionOrder, pageOrder, sectionMeta, customSections);
+  }, [pageStates, sectionOrder, pageOrder, sectionMeta, customSections, saveToKV]);
 
   // --- Backup / Restore ---
   const handleBackup = () => {
@@ -976,6 +1133,7 @@ export default function App() {
         if (data.sectionOrder) setSectionOrder(data.sectionOrder);
         if (data.pageOrder) setPageOrder(data.pageOrder);
         if (data.sectionMeta) setSectionMeta(data.sectionMeta);
+        if (data.customSections) setCustomSections(data.customSections);
       } catch (err) {
         console.error("Invalid backup file:", err);
       }
@@ -984,12 +1142,33 @@ export default function App() {
     e.target.value = "";
   };
 
-  // --- Compute active sections and pages ---
+  // --- Compute active sections and pages (merge custom pages into section objects) ---
   const tabKey = tab === 0 ? "site" : "outreach";
-  const orderedSections = getOrderedSections(tabKey);
+  const orderedSections = useMemo(() => {
+    const base = getOrderedSections(tabKey);
+    return base.map((s) => {
+      const cp = sectionMeta[s.id]?.customPages;
+      if (!cp || cp.length === 0 || s.subgroups) return s;
+      return { ...s, pages: [...(s.pages || []), ...cp] };
+    });
+  }, [getOrderedSections, tabKey, sectionMeta]);
+
   const allPages = useMemo(
     () => orderedSections.flatMap((s) => getSectionPages(s)),
     [orderedSections]
+  );
+
+  // --- Page counts per tab (including custom sections + pages) ---
+  const totalPages = useCallback(
+    (tk) => {
+      const staticSections = tk === "site" ? SITE_SECTIONS : OUTREACH_SECTIONS;
+      const custom = customSections[tk] || [];
+      return [...staticSections, ...custom].reduce(
+        (count, s) => count + getSectionPages(s).length + (sectionMeta[s.id]?.customPages?.length || 0),
+        0
+      );
+    },
+    [customSections, sectionMeta]
   );
 
   // --- Save status indicator ---
@@ -1097,8 +1276,8 @@ export default function App() {
         onChange={(_, v) => setTab(v)}
         sx={{ mb: 2 }}
       >
-        <Tab label={`Website Pages (${getAllPageIds(SITE_SECTIONS).length})`} />
-        <Tab label={`Pages for Outreach (${getAllPageIds(OUTREACH_SECTIONS).length})`} />
+        <Tab label={`Website Pages (${totalPages("site")})`} />
+        <Tab label={`Pages for Outreach (${totalPages("outreach")})`} />
       </Tabs>
 
       {/* Overall progress bar */}
@@ -1117,6 +1296,9 @@ export default function App() {
           onReorderPage={reorderPage}
           sectionMeta={sectionMeta[section.id] || {}}
           onUpdateSectionMeta={(meta) => updateSectionMeta(section.id, meta)}
+          onAddPage={(name, url) => addCustomPage(section.id, name, url)}
+          onRemovePage={(pageId) => removeCustomPage(section.id, pageId)}
+          onRemoveSection={section.id.startsWith("custom-sec-") ? () => removeCustomSection(tabKey, section.id) : undefined}
           onSortByPriority={sortByPriority}
           onMoveUp={() => reorderSection(tabKey, section.id, -1)}
           onMoveDown={() => reorderSection(tabKey, section.id, 1)}
@@ -1126,6 +1308,62 @@ export default function App() {
           statusFilter={statusFilter}
         />
       ))}
+
+      {/* Add Section */}
+      {addingSection ? (
+        <Paper variant="outlined" sx={{ mb: 2, p: 2 }}>
+          <Typography variant="subtitle2" sx={{ mb: 1.5 }}>Add New Section</Typography>
+          <Box sx={{ display: "flex", gap: 1, alignItems: "center", flexWrap: "wrap" }}>
+            <FormControl size="small" sx={{ minWidth: 120 }}>
+              <InputLabel>Icon</InputLabel>
+              <Select value={newSectionIcon} label="Icon" onChange={(e) => setNewSectionIcon(e.target.value)}>
+                {Object.keys(ICON_MAP).map((key) => (
+                  <MenuItem key={key} value={key}>{key}</MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <TextField
+              size="small"
+              placeholder="Section name..."
+              value={newSectionName}
+              onChange={(e) => setNewSectionName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && newSectionName.trim()) {
+                  addCustomSection(tabKey, newSectionName.trim(), newSectionIcon);
+                  setNewSectionName(""); setNewSectionIcon("Bolt"); setAddingSection(false);
+                }
+                if (e.key === "Escape") { setAddingSection(false); setNewSectionName(""); }
+              }}
+              autoFocus
+              sx={{ flex: 1, minWidth: 200 }}
+            />
+            <Button
+              variant="contained"
+              size="small"
+              disabled={!newSectionName.trim()}
+              onClick={() => {
+                addCustomSection(tabKey, newSectionName.trim(), newSectionIcon);
+                setNewSectionName(""); setNewSectionIcon("Bolt"); setAddingSection(false);
+              }}
+            >
+              Add
+            </Button>
+            <Button size="small" onClick={() => { setAddingSection(false); setNewSectionName(""); }}>
+              Cancel
+            </Button>
+          </Box>
+        </Paper>
+      ) : (
+        <Box sx={{ display: "flex", justifyContent: "center", mb: 2 }}>
+          <Chip
+            icon={<AddIcon sx={{ fontSize: 14 }} />}
+            label="Add Section"
+            variant="outlined"
+            onClick={() => setAddingSection(true)}
+            sx={{ cursor: "pointer", borderStyle: "dashed" }}
+          />
+        </Box>
+      )}
 
       {/* Footer */}
       <Typography variant="body2" color="text.secondary" sx={{ textAlign: "center", mt: 4, mb: 2 }}>
