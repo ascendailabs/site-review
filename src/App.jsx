@@ -331,6 +331,8 @@ function ReviewerRow({ reviewer, onChange, onRemove }) {
 function PageCard({ page, pageState, onUpdate, onMoveUp, onMoveDown, isFirst, isLast }) {
   const [editingMarkup, setEditingMarkup] = useState(false);
   const [markupDraft, setMarkupDraft] = useState("");
+  const [editingPurpose, setEditingPurpose] = useState(false);
+  const [purposeDraft, setPurposeDraft] = useState("");
   const [addingReviewer, setAddingReviewer] = useState(false);
   const [reviewerName, setReviewerName] = useState("");
   const markupUrl = pageState?.markupUrl || "";
@@ -399,6 +401,49 @@ function PageCard({ page, pageState, onUpdate, onMoveUp, onMoveDown, isFirst, is
             <Tooltip title={page.handoff} arrow>
               <Chip label="Handoff" size="small" sx={{ bgcolor: "#F3E5F5", color: "#7B1FA2", fontWeight: 600 }} />
             </Tooltip>
+          )}
+        </Box>
+
+        {/* Purpose field */}
+        <Box sx={{ ml: 6.5, mt: 0.5 }}>
+          {editingPurpose ? (
+            <TextField
+              size="small"
+              fullWidth
+              placeholder="What is this page's purpose?"
+              value={purposeDraft}
+              onChange={(e) => setPurposeDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  onUpdate({ ...pageState, purpose: purposeDraft });
+                  setEditingPurpose(false);
+                }
+                if (e.key === "Escape") setEditingPurpose(false);
+              }}
+              onBlur={() => {
+                onUpdate({ ...pageState, purpose: purposeDraft });
+                setEditingPurpose(false);
+              }}
+              autoFocus
+              sx={{ "& .MuiInputBase-input": { fontSize: 13, py: 0.5 } }}
+            />
+          ) : (
+            <Typography
+              variant="body2"
+              onClick={() => {
+                setPurposeDraft(pageState?.purpose || "");
+                setEditingPurpose(true);
+              }}
+              sx={{
+                color: pageState?.purpose ? "text.secondary" : "text.disabled",
+                fontStyle: pageState?.purpose ? "normal" : "italic",
+                cursor: "pointer",
+                fontSize: 13,
+                "&:hover": { color: "text.primary" },
+              }}
+            >
+              {pageState?.purpose || "Add purpose..."}
+            </Typography>
           )}
         </Box>
 
@@ -517,6 +562,8 @@ function SectionGroup({
   onUpdatePage,
   pageOrder,
   onReorderPage,
+  sectionMeta,
+  onUpdateSectionMeta,
   onSortByPriority,
   onMoveUp,
   onMoveDown,
@@ -526,6 +573,8 @@ function SectionGroup({
   statusFilter,
 }) {
   const [expanded, setExpanded] = useState(section.collapsed !== true);
+  const [editingDesc, setEditingDesc] = useState(false);
+  const [descDraft, setDescDraft] = useState("");
   const IconComponent = ICON_MAP[section.icon] || BoltIcon;
   const allPages = getSectionPages(section);
 
@@ -621,9 +670,46 @@ function SectionGroup({
         <Typography variant="subtitle1" sx={{ fontWeight: 600, flex: 1 }}>
           {section.group}
         </Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ display: { xs: "none", sm: "block" } }}>
-          {section.description}
-        </Typography>
+        {editingDesc ? (
+          <TextField
+            size="small"
+            placeholder="Section goals / description..."
+            value={descDraft}
+            onChange={(e) => setDescDraft(e.target.value)}
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                onUpdateSectionMeta({ description: descDraft });
+                setEditingDesc(false);
+              }
+              if (e.key === "Escape") setEditingDesc(false);
+            }}
+            onBlur={() => {
+              onUpdateSectionMeta({ description: descDraft });
+              setEditingDesc(false);
+            }}
+            autoFocus
+            sx={{ flex: 1, display: { xs: "none", sm: "flex" }, "& .MuiInputBase-input": { fontSize: 13, py: 0.5 } }}
+          />
+        ) : (
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            onClick={(e) => {
+              e.stopPropagation();
+              setDescDraft(sectionMeta?.description || section.description);
+              setEditingDesc(true);
+            }}
+            sx={{
+              display: { xs: "none", sm: "block" },
+              cursor: "pointer",
+              flex: 1,
+              "&:hover": { color: "text.primary" },
+            }}
+          >
+            {sectionMeta?.description || section.description}
+          </Typography>
+        )}
         <Chip label={`${reviewedCount}/${allPages.length}`} size="small" variant="outlined" />
         <Tooltip title="Sort by priority">
           <IconButton
@@ -696,6 +782,7 @@ export default function App() {
   const [pageStates, setPageStates] = useState({});
   const [sectionOrder, setSectionOrder] = useState({ site: [], outreach: [] });
   const [pageOrder, setPageOrder] = useState({});
+  const [sectionMeta, setSectionMeta] = useState({});
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [saveStatus, setSaveStatus] = useState("idle"); // idle | saving | saved | error
@@ -720,6 +807,9 @@ export default function App() {
         if (data.pageOrder) {
           setPageOrder(data.pageOrder);
         }
+        if (data.sectionMeta) {
+          setSectionMeta(data.sectionMeta);
+        }
         skipNextSave.current = true;
       } catch (err) {
         console.error("Failed to load state:", err);
@@ -730,13 +820,13 @@ export default function App() {
   }, []);
 
   // --- Auto-save with debounce ---
-  const saveToKV = useCallback(async (ps, so, po) => {
+  const saveToKV = useCallback(async (ps, so, po, sm) => {
     setSaveStatus("saving");
     try {
       const res = await fetch("/api/state", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pageStates: ps, sectionOrder: so, pageOrder: po }),
+        body: JSON.stringify({ pageStates: ps, sectionOrder: so, pageOrder: po, sectionMeta: sm }),
       });
       if (res.ok) {
         setSaveStatus("saved");
@@ -756,10 +846,18 @@ export default function App() {
     }
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      saveToKV(pageStates, sectionOrder, pageOrder);
+      saveToKV(pageStates, sectionOrder, pageOrder, sectionMeta);
     }, 2000);
     return () => clearTimeout(saveTimer.current);
-  }, [pageStates, sectionOrder, pageOrder, loaded, saveToKV]);
+  }, [pageStates, sectionOrder, pageOrder, sectionMeta, loaded, saveToKV]);
+
+  // --- Update section metadata ---
+  const updateSectionMeta = useCallback((sectionId, meta) => {
+    setSectionMeta((prev) => ({
+      ...prev,
+      [sectionId]: { ...prev[sectionId], ...meta },
+    }));
+  }, []);
 
   // --- Update a page's state ---
   const updatePageState = useCallback((pageId, state) => {
@@ -859,8 +957,8 @@ export default function App() {
   // --- Manual save ---
   const handleManualSave = useCallback(() => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveToKV(pageStates, sectionOrder, pageOrder);
-  }, [pageStates, sectionOrder, pageOrder, saveToKV]);
+    saveToKV(pageStates, sectionOrder, pageOrder, sectionMeta);
+  }, [pageStates, sectionOrder, pageOrder, sectionMeta, saveToKV]);
 
   // --- Backup / Restore ---
   const handleBackup = () => {
@@ -877,6 +975,7 @@ export default function App() {
         if (data.pageStates) setPageStates(data.pageStates);
         if (data.sectionOrder) setSectionOrder(data.sectionOrder);
         if (data.pageOrder) setPageOrder(data.pageOrder);
+        if (data.sectionMeta) setSectionMeta(data.sectionMeta);
       } catch (err) {
         console.error("Invalid backup file:", err);
       }
@@ -1016,6 +1115,8 @@ export default function App() {
           onUpdatePage={updatePageState}
           pageOrder={pageOrder}
           onReorderPage={reorderPage}
+          sectionMeta={sectionMeta[section.id] || {}}
+          onUpdateSectionMeta={(meta) => updateSectionMeta(section.id, meta)}
           onSortByPriority={sortByPriority}
           onMoveUp={() => reorderSection(tabKey, section.id, -1)}
           onMoveDown={() => reorderSection(tabKey, section.id, 1)}
