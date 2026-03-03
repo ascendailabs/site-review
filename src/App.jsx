@@ -1,0 +1,787 @@
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import {
+  Box,
+  Typography,
+  Paper,
+  Tabs,
+  Tab,
+  TextField,
+  Select,
+  MenuItem,
+  FormControl,
+  InputLabel,
+  Chip,
+  IconButton,
+  Collapse,
+  Card,
+  Stack,
+  Tooltip,
+  Button,
+  InputAdornment,
+  ClickAwayListener,
+} from "@mui/material";
+import BoltIcon from "@mui/icons-material/Bolt";
+import MemoryIcon from "@mui/icons-material/Memory";
+import BusinessIcon from "@mui/icons-material/Business";
+import MenuBookIcon from "@mui/icons-material/MenuBook";
+import VideocamIcon from "@mui/icons-material/Videocam";
+import SchoolIcon from "@mui/icons-material/School";
+import CampaignIcon from "@mui/icons-material/Campaign";
+import LinkIcon from "@mui/icons-material/Link";
+import SearchIcon from "@mui/icons-material/Search";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+import ExpandLessIcon from "@mui/icons-material/ExpandLess";
+import KeyboardArrowUp from "@mui/icons-material/KeyboardArrowUp";
+import KeyboardArrowDown from "@mui/icons-material/KeyboardArrowDown";
+import OpenInNewIcon from "@mui/icons-material/OpenInNew";
+import CloudUpload from "@mui/icons-material/CloudUpload";
+import CloudDownload from "@mui/icons-material/CloudDownload";
+import CheckCircleIcon from "@mui/icons-material/CheckCircle";
+import SyncIcon from "@mui/icons-material/Sync";
+import ErrorIcon from "@mui/icons-material/Error";
+import NotesIcon from "@mui/icons-material/Notes";
+import EditIcon from "@mui/icons-material/Edit";
+
+import { STATUSES, STATUS_KEYS } from "./data/statuses";
+import { SITE_SECTIONS } from "./data/siteSections";
+import { OUTREACH_SECTIONS } from "./data/outreachSections";
+
+const ICON_MAP = {
+  Bolt: BoltIcon,
+  Memory: MemoryIcon,
+  Business: BusinessIcon,
+  MenuBook: MenuBookIcon,
+  Videocam: VideocamIcon,
+  School: SchoolIcon,
+  Campaign: CampaignIcon,
+  Link: LinkIcon,
+};
+
+// --- Helper: get all pages from a section (handles subgroups) ---
+function getSectionPages(section) {
+  if (section.subgroups) {
+    return section.subgroups.flatMap((sg) => sg.pages);
+  }
+  return section.pages || [];
+}
+
+// --- Helper: get all page IDs from sections ---
+function getAllPageIds(sections) {
+  return sections.flatMap((s) => getSectionPages(s).map((p) => p.id));
+}
+
+// --- ProgressBar: colored segments ---
+function ProgressBar({ pages, pageStates, height = 6 }) {
+  const counts = {};
+  STATUS_KEYS.forEach((k) => (counts[k] = 0));
+  pages.forEach((p) => {
+    const status = pageStates[p.id]?.status || "unreviewed";
+    counts[status] = (counts[status] || 0) + 1;
+  });
+  const total = pages.length;
+  if (total === 0) return null;
+
+  return (
+    <Box sx={{ display: "flex", width: "100%", height, borderRadius: 1, overflow: "hidden", bgcolor: "#eee" }}>
+      {STATUS_KEYS.map((key) => {
+        const pct = (counts[key] / total) * 100;
+        if (pct === 0) return null;
+        return (
+          <Tooltip key={key} title={`${STATUSES[key].label}: ${counts[key]}`}>
+            <Box sx={{ width: `${pct}%`, bgcolor: STATUSES[key].color, transition: "width 0.3s" }} />
+          </Tooltip>
+        );
+      })}
+    </Box>
+  );
+}
+
+// --- StatusBadge + StatusPicker ---
+function StatusBadge({ status, onChange }) {
+  const [open, setOpen] = useState(false);
+  const s = STATUSES[status] || STATUSES.unreviewed;
+
+  return (
+    <Box sx={{ position: "relative", display: "inline-block" }}>
+      <Chip
+        label={s.label}
+        size="small"
+        onClick={() => setOpen(!open)}
+        sx={{
+          bgcolor: s.bgColor,
+          color: s.color,
+          fontWeight: 600,
+          border: `1px solid ${s.color}`,
+          cursor: "pointer",
+          "&:hover": { opacity: 0.85 },
+        }}
+      />
+      {open && (
+        <ClickAwayListener onClickAway={() => setOpen(false)}>
+          <Paper
+            elevation={4}
+            sx={{
+              position: "absolute",
+              right: 0,
+              top: "100%",
+              mt: 0.5,
+              zIndex: 10,
+              minWidth: 160,
+              p: 0.5,
+            }}
+          >
+            {STATUS_KEYS.map((key) => (
+              <Box
+                key={key}
+                onClick={() => {
+                  onChange(key);
+                  setOpen(false);
+                }}
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 1,
+                  px: 1.5,
+                  py: 0.75,
+                  borderRadius: 1,
+                  cursor: "pointer",
+                  bgcolor: status === key ? STATUSES[key].bgColor : "transparent",
+                  "&:hover": { bgcolor: STATUSES[key].bgColor },
+                }}
+              >
+                <Box
+                  sx={{
+                    width: 10,
+                    height: 10,
+                    borderRadius: "50%",
+                    bgcolor: STATUSES[key].color,
+                  }}
+                />
+                <Typography variant="body2" sx={{ fontWeight: status === key ? 600 : 400 }}>
+                  {STATUSES[key].label}
+                </Typography>
+              </Box>
+            ))}
+          </Paper>
+        </ClickAwayListener>
+      )}
+    </Box>
+  );
+}
+
+// --- PageCard ---
+function PageCard({ page, pageState, onUpdate, onMoveUp, onMoveDown, isFirst, isLast }) {
+  const [notesOpen, setNotesOpen] = useState(false);
+  const [editingMarkup, setEditingMarkup] = useState(false);
+  const [markupDraft, setMarkupDraft] = useState("");
+  const status = pageState?.status || "unreviewed";
+  const note = pageState?.note || "";
+  const markupUrl = pageState?.markupUrl || "";
+  const borderColor = STATUSES[status]?.color || "#9E9E9E";
+
+  return (
+    <Card
+      variant="outlined"
+      sx={{
+        borderLeft: `4px solid ${borderColor}`,
+        borderRadius: 2,
+        mb: 1,
+        transition: "border-color 0.2s",
+      }}
+    >
+      <Box sx={{ p: 1.5 }}>
+        {/* Top row */}
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+            <IconButton size="small" disabled={isFirst} onClick={onMoveUp} sx={{ p: 0.25 }}>
+              <KeyboardArrowUp fontSize="small" />
+            </IconButton>
+            <IconButton size="small" disabled={isLast} onClick={onMoveDown} sx={{ p: 0.25 }}>
+              <KeyboardArrowDown fontSize="small" />
+            </IconButton>
+          </Box>
+          <Typography variant="body1" sx={{ fontWeight: 600, mr: 0.5 }}>
+            {page.name}
+          </Typography>
+          <Chip
+            label={page.url.replace("https://ascendlabs.ai", "")}
+            size="small"
+            component="a"
+            href={page.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            clickable
+            icon={<OpenInNewIcon sx={{ fontSize: 14 }} />}
+            variant="outlined"
+            sx={{ fontSize: 12, maxWidth: 260, "& .MuiChip-label": { overflow: "hidden", textOverflow: "ellipsis" } }}
+          />
+          {page.handoff && (
+            <Tooltip title={page.handoff} arrow>
+              <Chip label="Handoff" size="small" sx={{ bgcolor: "#F3E5F5", color: "#7B1FA2", fontWeight: 600 }} />
+            </Tooltip>
+          )}
+          <Box sx={{ flex: 1 }} />
+          <IconButton
+            size="small"
+            onClick={() => setNotesOpen(!notesOpen)}
+            sx={{ color: note ? "primary.main" : "text.secondary" }}
+          >
+            <NotesIcon fontSize="small" />
+          </IconButton>
+          <StatusBadge
+            status={status}
+            onChange={(newStatus) => onUpdate({ ...pageState, status: newStatus })}
+          />
+        </Box>
+
+        {/* Markup.io row */}
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 0.75, ml: 6.5 }}>
+          {markupUrl && !editingMarkup && (
+            <>
+              <Chip
+                label="Markup"
+                size="small"
+                component="a"
+                href={markupUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                clickable
+                sx={{ bgcolor: "#FFF3E0", color: "#E65100", fontWeight: 600, fontSize: 12 }}
+              />
+              <IconButton
+                size="small"
+                onClick={() => {
+                  setMarkupDraft(markupUrl);
+                  setEditingMarkup(true);
+                }}
+                sx={{ p: 0.25 }}
+              >
+                <EditIcon sx={{ fontSize: 16 }} />
+              </IconButton>
+            </>
+          )}
+          {!markupUrl && !editingMarkup && (
+            <Chip
+              label="+ Markup"
+              size="small"
+              variant="outlined"
+              onClick={() => {
+                setMarkupDraft("");
+                setEditingMarkup(true);
+              }}
+              sx={{ borderStyle: "dashed", color: "text.secondary", fontSize: 12, cursor: "pointer" }}
+            />
+          )}
+          {editingMarkup && (
+            <TextField
+              size="small"
+              placeholder="Paste Markup.io link..."
+              value={markupDraft}
+              onChange={(e) => setMarkupDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  onUpdate({ ...pageState, markupUrl: markupDraft });
+                  setEditingMarkup(false);
+                }
+                if (e.key === "Escape") setEditingMarkup(false);
+              }}
+              onBlur={() => {
+                onUpdate({ ...pageState, markupUrl: markupDraft });
+                setEditingMarkup(false);
+              }}
+              autoFocus
+              sx={{ width: 300, "& .MuiInputBase-input": { fontSize: 13, py: 0.5 } }}
+            />
+          )}
+        </Box>
+
+        {/* Notes */}
+        <Collapse in={notesOpen}>
+          <TextField
+            multiline
+            minRows={2}
+            maxRows={6}
+            fullWidth
+            placeholder="Add notes..."
+            value={note}
+            onChange={(e) => onUpdate({ ...pageState, note: e.target.value })}
+            sx={{ mt: 1, ml: 6.5, width: "calc(100% - 52px)", "& .MuiInputBase-input": { fontSize: 13 } }}
+          />
+        </Collapse>
+      </Box>
+    </Card>
+  );
+}
+
+// --- SectionGroup ---
+function SectionGroup({
+  section,
+  pageStates,
+  onUpdatePage,
+  pageOrder,
+  onReorderPage,
+  onMoveUp,
+  onMoveDown,
+  isFirst,
+  isLast,
+  searchTerm,
+  statusFilter,
+}) {
+  const [expanded, setExpanded] = useState(section.collapsed !== true);
+  const IconComponent = ICON_MAP[section.icon] || BoltIcon;
+  const allPages = getSectionPages(section);
+
+  const reviewedCount = allPages.filter((p) => {
+    const s = pageStates[p.id]?.status || "unreviewed";
+    return s !== "unreviewed";
+  }).length;
+
+  // Filter pages
+  const filterPage = useCallback(
+    (page) => {
+      if (statusFilter && statusFilter !== "all") {
+        const s = pageStates[page.id]?.status || "unreviewed";
+        if (s !== statusFilter) return false;
+      }
+      if (searchTerm) {
+        const term = searchTerm.toLowerCase();
+        const note = pageStates[page.id]?.note || "";
+        if (
+          !page.name.toLowerCase().includes(term) &&
+          !page.url.toLowerCase().includes(term) &&
+          !note.toLowerCase().includes(term)
+        )
+          return false;
+      }
+      return true;
+    },
+    [pageStates, statusFilter, searchTerm]
+  );
+
+  // Get ordered pages for a section or subgroup
+  const getOrderedPages = useCallback(
+    (pages, orderKey) => {
+      const order = pageOrder[orderKey];
+      if (!order) return pages.filter(filterPage);
+      const pageMap = Object.fromEntries(pages.map((p) => [p.id, p]));
+      const ordered = order.filter((id) => pageMap[id]).map((id) => pageMap[id]);
+      // Add any pages not in the order
+      const remaining = pages.filter((p) => !order.includes(p.id));
+      return [...ordered, ...remaining].filter(filterPage);
+    },
+    [pageOrder, filterPage]
+  );
+
+  const hasSubgroups = !!section.subgroups;
+
+  const visiblePages = hasSubgroups
+    ? section.subgroups.flatMap((sg) => getOrderedPages(sg.pages, sg.id))
+    : getOrderedPages(section.pages, section.id);
+
+  if (visiblePages.length === 0 && (searchTerm || statusFilter !== "all")) return null;
+
+  return (
+    <Paper variant="outlined" sx={{ mb: 2, overflow: "hidden" }}>
+      {/* Header */}
+      <Box
+        onClick={() => setExpanded(!expanded)}
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          gap: 1.5,
+          px: 2,
+          py: 1.5,
+          cursor: "pointer",
+          "&:hover": { bgcolor: "action.hover" },
+        }}
+      >
+        <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+          <IconButton
+            size="small"
+            disabled={isFirst}
+            onClick={(e) => {
+              e.stopPropagation();
+              onMoveUp();
+            }}
+            sx={{ p: 0.25 }}
+          >
+            <KeyboardArrowUp fontSize="small" />
+          </IconButton>
+          <IconButton
+            size="small"
+            disabled={isLast}
+            onClick={(e) => {
+              e.stopPropagation();
+              onMoveDown();
+            }}
+            sx={{ p: 0.25 }}
+          >
+            <KeyboardArrowDown fontSize="small" />
+          </IconButton>
+        </Box>
+        <IconComponent sx={{ color: "primary.main" }} />
+        <Typography variant="subtitle1" sx={{ fontWeight: 600, flex: 1 }}>
+          {section.group}
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ display: { xs: "none", sm: "block" } }}>
+          {section.description}
+        </Typography>
+        <Chip label={`${reviewedCount}/${allPages.length}`} size="small" variant="outlined" />
+        {expanded ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+      </Box>
+
+      {/* Section progress bar */}
+      <Box sx={{ px: 2, pb: expanded ? 0 : 1 }}>
+        <ProgressBar pages={allPages} pageStates={pageStates} height={4} />
+      </Box>
+
+      {/* Pages */}
+      <Collapse in={expanded}>
+        <Box sx={{ px: 2, pb: 2, pt: 1 }}>
+          {hasSubgroups
+            ? section.subgroups.map((sg) => {
+                const orderedPages = getOrderedPages(sg.pages, sg.id);
+                if (orderedPages.length === 0) return null;
+                return (
+                  <Box key={sg.id} sx={{ mb: 2 }}>
+                    <Typography variant="overline" sx={{ color: "text.secondary", mb: 0.5, display: "block" }}>
+                      {sg.label}
+                    </Typography>
+                    {orderedPages.map((page, idx) => (
+                      <PageCard
+                        key={page.id}
+                        page={page}
+                        pageState={pageStates[page.id] || {}}
+                        onUpdate={(state) => onUpdatePage(page.id, state)}
+                        onMoveUp={() => onReorderPage(sg.id, page.id, -1)}
+                        onMoveDown={() => onReorderPage(sg.id, page.id, 1)}
+                        isFirst={idx === 0}
+                        isLast={idx === orderedPages.length - 1}
+                      />
+                    ))}
+                  </Box>
+                );
+              })
+            : visiblePages.map((page, idx) => (
+                <PageCard
+                  key={page.id}
+                  page={page}
+                  pageState={pageStates[page.id] || {}}
+                  onUpdate={(state) => onUpdatePage(page.id, state)}
+                  onMoveUp={() => onReorderPage(section.id, page.id, -1)}
+                  onMoveDown={() => onReorderPage(section.id, page.id, 1)}
+                  isFirst={idx === 0}
+                  isLast={idx === visiblePages.length - 1}
+                />
+              ))}
+        </Box>
+      </Collapse>
+    </Paper>
+  );
+}
+
+// --- Main App ---
+export default function App() {
+  const [tab, setTab] = useState(0);
+  const [pageStates, setPageStates] = useState({});
+  const [sectionOrder, setSectionOrder] = useState({ site: [], outreach: [] });
+  const [pageOrder, setPageOrder] = useState({});
+  const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [saveStatus, setSaveStatus] = useState("idle"); // idle | saving | saved | error
+  const [loaded, setLoaded] = useState(false);
+
+  const saveTimer = useRef(null);
+  const skipNextSave = useRef(false);
+  const fileInputRef = useRef(null);
+
+  // --- Load state from KV on mount ---
+  useEffect(() => {
+    async function load() {
+      try {
+        const res = await fetch("/api/state");
+        const data = await res.json();
+        if (data.pageStates) {
+          setPageStates(data.pageStates);
+        }
+        if (data.sectionOrder) {
+          setSectionOrder(data.sectionOrder);
+        }
+        if (data.pageOrder) {
+          setPageOrder(data.pageOrder);
+        }
+        skipNextSave.current = true;
+      } catch (err) {
+        console.error("Failed to load state:", err);
+      }
+      setLoaded(true);
+    }
+    load();
+  }, []);
+
+  // --- Auto-save with debounce ---
+  const saveToKV = useCallback(async (ps, so, po) => {
+    setSaveStatus("saving");
+    try {
+      const res = await fetch("/api/state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pageStates: ps, sectionOrder: so, pageOrder: po }),
+      });
+      if (res.ok) {
+        setSaveStatus("saved");
+      } else {
+        setSaveStatus("error");
+      }
+    } catch {
+      setSaveStatus("error");
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!loaded) return;
+    if (skipNextSave.current) {
+      skipNextSave.current = false;
+      return;
+    }
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      saveToKV(pageStates, sectionOrder, pageOrder);
+    }, 2000);
+    return () => clearTimeout(saveTimer.current);
+  }, [pageStates, sectionOrder, pageOrder, loaded, saveToKV]);
+
+  // --- Update a page's state ---
+  const updatePageState = useCallback((pageId, state) => {
+    setPageStates((prev) => ({
+      ...prev,
+      [pageId]: { ...prev[pageId], ...state },
+    }));
+  }, []);
+
+  // --- Reorder sections ---
+  const reorderSection = useCallback(
+    (tabKey, sectionId, direction) => {
+      const sections = tabKey === "site" ? SITE_SECTIONS : OUTREACH_SECTIONS;
+      const currentOrder = sectionOrder[tabKey]?.length
+        ? sectionOrder[tabKey]
+        : sections.map((s) => s.id);
+      const idx = currentOrder.indexOf(sectionId);
+      if (idx < 0) return;
+      const newIdx = idx + direction;
+      if (newIdx < 0 || newIdx >= currentOrder.length) return;
+      const newOrder = [...currentOrder];
+      [newOrder[idx], newOrder[newIdx]] = [newOrder[newIdx], newOrder[idx]];
+      setSectionOrder((prev) => ({ ...prev, [tabKey]: newOrder }));
+    },
+    [sectionOrder]
+  );
+
+  // --- Reorder pages within a section ---
+  const reorderPage = useCallback(
+    (sectionKey, pageId, direction) => {
+      // Get current page list from the section data
+      let defaultPages = [];
+      const allSections = [...SITE_SECTIONS, ...OUTREACH_SECTIONS];
+      for (const s of allSections) {
+        if (s.id === sectionKey) {
+          defaultPages = s.pages?.map((p) => p.id) || [];
+          break;
+        }
+        if (s.subgroups) {
+          for (const sg of s.subgroups) {
+            if (sg.id === sectionKey) {
+              defaultPages = sg.pages.map((p) => p.id);
+              break;
+            }
+          }
+        }
+      }
+
+      const currentOrder = pageOrder[sectionKey]?.length ? pageOrder[sectionKey] : defaultPages;
+      const idx = currentOrder.indexOf(pageId);
+      if (idx < 0) return;
+      const newIdx = idx + direction;
+      if (newIdx < 0 || newIdx >= currentOrder.length) return;
+      const newOrder = [...currentOrder];
+      [newOrder[idx], newOrder[newIdx]] = [newOrder[newIdx], newOrder[idx]];
+      setPageOrder((prev) => ({ ...prev, [sectionKey]: newOrder }));
+    },
+    [pageOrder]
+  );
+
+  // --- Get ordered sections for a tab ---
+  const getOrderedSections = useCallback(
+    (tabKey) => {
+      const sections = tabKey === "site" ? SITE_SECTIONS : OUTREACH_SECTIONS;
+      const order = sectionOrder[tabKey];
+      if (!order || order.length === 0) return sections;
+      const sectionMap = Object.fromEntries(sections.map((s) => [s.id, s]));
+      const ordered = order.filter((id) => sectionMap[id]).map((id) => sectionMap[id]);
+      const remaining = sections.filter((s) => !order.includes(s.id));
+      return [...ordered, ...remaining];
+    },
+    [sectionOrder]
+  );
+
+  // --- Backup / Restore ---
+  const handleBackup = () => {
+    window.open("/api/backup", "_blank");
+  };
+
+  const handleRestore = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        if (data.pageStates) setPageStates(data.pageStates);
+        if (data.sectionOrder) setSectionOrder(data.sectionOrder);
+        if (data.pageOrder) setPageOrder(data.pageOrder);
+      } catch (err) {
+        console.error("Invalid backup file:", err);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  };
+
+  // --- Compute active sections and pages ---
+  const tabKey = tab === 0 ? "site" : "outreach";
+  const orderedSections = getOrderedSections(tabKey);
+  const allPages = useMemo(
+    () => orderedSections.flatMap((s) => getSectionPages(s)),
+    [orderedSections]
+  );
+
+  // --- Save status indicator ---
+  const saveIndicator = useMemo(() => {
+    switch (saveStatus) {
+      case "saving":
+        return <Chip icon={<SyncIcon sx={{ fontSize: 16 }} />} label="Saving..." size="small" sx={{ bgcolor: "#FFF3E0", color: "#E65100" }} />;
+      case "saved":
+        return <Chip icon={<CheckCircleIcon sx={{ fontSize: 16 }} />} label="Saved" size="small" sx={{ bgcolor: "#E8F5E9", color: "#2E7D32" }} />;
+      case "error":
+        return <Chip icon={<ErrorIcon sx={{ fontSize: 16 }} />} label="Save failed" size="small" sx={{ bgcolor: "#FFEBEE", color: "#D32F2F" }} />;
+      default:
+        return null;
+    }
+  }, [saveStatus]);
+
+  return (
+    <Box sx={{ maxWidth: 960, mx: "auto", px: { xs: 2, sm: 3 }, py: 4 }}>
+      {/* Header */}
+      <Box sx={{ mb: 3 }}>
+        <Typography variant="h4" sx={{ fontWeight: 700, color: "text.primary" }}>
+          Ascend Labs Website Review
+        </Typography>
+        <Typography variant="body1" color="text.secondary" sx={{ mt: 0.5 }}>
+          Track review status for all pages across the ascendlabs.ai website
+        </Typography>
+      </Box>
+
+      {/* Toolbar */}
+      <Paper variant="outlined" sx={{ p: 2, mb: 3 }}>
+        <Stack direction={{ xs: "column", sm: "row" }} spacing={2} alignItems={{ sm: "center" }}>
+          <TextField
+            size="small"
+            placeholder="Search pages..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <SearchIcon sx={{ color: "text.secondary" }} />
+                </InputAdornment>
+              ),
+            }}
+            sx={{ flex: 1, minWidth: 200 }}
+          />
+          <FormControl size="small" sx={{ minWidth: 160 }}>
+            <InputLabel>Status</InputLabel>
+            <Select
+              value={statusFilter}
+              label="Status"
+              onChange={(e) => setStatusFilter(e.target.value)}
+            >
+              <MenuItem value="all">All Statuses</MenuItem>
+              {STATUS_KEYS.map((key) => (
+                <MenuItem key={key} value={key}>
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                    <Box sx={{ width: 10, height: 10, borderRadius: "50%", bgcolor: STATUSES[key].color }} />
+                    {STATUSES[key].label}
+                  </Box>
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          {saveIndicator}
+          <Box sx={{ display: "flex", gap: 1 }}>
+            <Button
+              variant="outlined"
+              size="small"
+              startIcon={<CloudDownload />}
+              onClick={handleBackup}
+            >
+              Backup
+            </Button>
+            <Button
+              variant="outlined"
+              size="small"
+              startIcon={<CloudUpload />}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              Restore
+            </Button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".json"
+              onChange={handleRestore}
+              style={{ display: "none" }}
+            />
+          </Box>
+        </Stack>
+      </Paper>
+
+      {/* Tabs */}
+      <Tabs
+        value={tab}
+        onChange={(_, v) => setTab(v)}
+        sx={{ mb: 2 }}
+      >
+        <Tab label={`Website Pages (${getAllPageIds(SITE_SECTIONS).length})`} />
+        <Tab label={`Pages for Outreach (${getAllPageIds(OUTREACH_SECTIONS).length})`} />
+      </Tabs>
+
+      {/* Overall progress bar */}
+      <Box sx={{ mb: 3 }}>
+        <ProgressBar pages={allPages} pageStates={pageStates} height={8} />
+      </Box>
+
+      {/* Sections */}
+      {orderedSections.map((section, idx) => (
+        <SectionGroup
+          key={section.id}
+          section={section}
+          pageStates={pageStates}
+          onUpdatePage={updatePageState}
+          pageOrder={pageOrder}
+          onReorderPage={reorderPage}
+          onMoveUp={() => reorderSection(tabKey, section.id, -1)}
+          onMoveDown={() => reorderSection(tabKey, section.id, 1)}
+          isFirst={idx === 0}
+          isLast={idx === orderedSections.length - 1}
+          searchTerm={searchTerm}
+          statusFilter={statusFilter}
+        />
+      ))}
+
+      {/* Footer */}
+      <Typography variant="body2" color="text.secondary" sx={{ textAlign: "center", mt: 4, mb: 2 }}>
+        Ascend Labs Website Review Tracker
+      </Typography>
+    </Box>
+  );
+}
