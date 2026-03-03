@@ -45,6 +45,7 @@ import EditIcon from "@mui/icons-material/Edit";
 import SaveIcon from "@mui/icons-material/Save";
 import PersonAddIcon from "@mui/icons-material/PersonAdd";
 import CloseIcon from "@mui/icons-material/Close";
+import SortIcon from "@mui/icons-material/Sort";
 
 import { STATUSES, STATUS_KEYS } from "./data/statuses";
 import { SITE_SECTIONS } from "./data/siteSections";
@@ -60,6 +61,15 @@ const ICON_MAP = {
   Campaign: CampaignIcon,
   Link: LinkIcon,
 };
+
+const PRIORITIES = {
+  none:     { label: "No Priority", color: "#9E9E9E", bgColor: "#F5F5F5", sort: 4 },
+  high:     { label: "High",        color: "#D32F2F", bgColor: "#FFEBEE", sort: 0 },
+  medium:   { label: "Medium",      color: "#F57C00", bgColor: "#FFF3E0", sort: 1 },
+  low:      { label: "Low",         color: "#1976D2", bgColor: "#E3F2FD", sort: 2 },
+  deferred: { label: "Deferred",    color: "#78909C", bgColor: "#ECEFF1", sort: 3 },
+};
+const PRIORITY_KEYS = Object.keys(PRIORITIES);
 
 // --- Helper: get all pages from a section (handles subgroups) ---
 function getSectionPages(section) {
@@ -173,6 +183,74 @@ function StatusBadge({ status, onChange }) {
   );
 }
 
+// --- PriorityBadge ---
+function PriorityBadge({ priority, onChange }) {
+  const [open, setOpen] = useState(false);
+  const p = PRIORITIES[priority] || PRIORITIES.none;
+
+  return (
+    <Box sx={{ position: "relative", display: "inline-block" }}>
+      <Chip
+        label={p.label}
+        size="small"
+        onClick={() => setOpen(!open)}
+        sx={{
+          bgcolor: p.bgColor,
+          color: p.color,
+          fontWeight: 600,
+          border: `1px solid ${p.color}`,
+          cursor: "pointer",
+          fontSize: 11,
+          height: 24,
+          "&:hover": { opacity: 0.85 },
+        }}
+      />
+      {open && (
+        <ClickAwayListener onClickAway={() => setOpen(false)}>
+          <Paper
+            elevation={4}
+            sx={{
+              position: "absolute",
+              left: 0,
+              top: "100%",
+              mt: 0.5,
+              zIndex: 10,
+              minWidth: 140,
+              p: 0.5,
+            }}
+          >
+            {PRIORITY_KEYS.map((key) => (
+              <Box
+                key={key}
+                onClick={() => {
+                  onChange(key);
+                  setOpen(false);
+                }}
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 1,
+                  px: 1.5,
+                  py: 0.75,
+                  borderRadius: 1,
+                  cursor: "pointer",
+                  bgcolor: priority === key ? PRIORITIES[key].bgColor : "transparent",
+                  "&:hover": { bgcolor: PRIORITIES[key].bgColor },
+                }}
+              >
+                <Box sx={{ width: 10, height: 10, borderRadius: "50%", bgcolor: PRIORITIES[key].color }} />
+                <Typography variant="body2" sx={{ fontWeight: priority === key ? 600 : 400 }}>
+                  {PRIORITIES[key].label}
+                </Typography>
+              </Box>
+            ))}
+          </Paper>
+        </ClickAwayListener>
+      )}
+    </Box>
+  );
+}
+
 // --- PageCard ---
 function PageCard({ page, pageState, onUpdate, onMoveUp, onMoveDown, isFirst, isLast }) {
   const [notesOpen, setNotesOpen] = useState(false);
@@ -184,7 +262,8 @@ function PageCard({ page, pageState, onUpdate, onMoveUp, onMoveDown, isFirst, is
   const note = pageState?.note || "";
   const markupUrl = pageState?.markupUrl || "";
   const reviewers = pageState?.reviewers || [];
-  const borderColor = STATUSES[status]?.color || "#9E9E9E";
+  const priority = pageState?.priority || "none";
+  const borderColor = PRIORITIES[priority]?.color || "#9E9E9E";
 
   const addReviewer = () => {
     if (!reviewerName.trim()) return;
@@ -224,6 +303,10 @@ function PageCard({ page, pageState, onUpdate, onMoveUp, onMoveDown, isFirst, is
               <KeyboardArrowDown fontSize="small" />
             </IconButton>
           </Box>
+          <PriorityBadge
+            priority={priority}
+            onChange={(p) => onUpdate({ ...pageState, priority: p })}
+          />
           <Typography variant="body1" sx={{ fontWeight: 600, mr: 0.5 }}>
             {page.name}
           </Typography>
@@ -405,6 +488,7 @@ function SectionGroup({
   onUpdatePage,
   pageOrder,
   onReorderPage,
+  onSortByPriority,
   onMoveUp,
   onMoveDown,
   isFirst,
@@ -512,6 +596,18 @@ function SectionGroup({
           {section.description}
         </Typography>
         <Chip label={`${reviewedCount}/${allPages.length}`} size="small" variant="outlined" />
+        <Tooltip title="Sort by priority">
+          <IconButton
+            size="small"
+            onClick={(e) => {
+              e.stopPropagation();
+              onSortByPriority(section);
+            }}
+            sx={{ p: 0.5 }}
+          >
+            <SortIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
         {expanded ? <ExpandLessIcon /> : <ExpandMoreIcon />}
       </Box>
 
@@ -695,6 +791,28 @@ export default function App() {
     [pageOrder]
   );
 
+  // --- Sort pages by priority within a section ---
+  const sortByPriority = useCallback(
+    (section) => {
+      const sortGroup = (pages, orderKey) => {
+        const ids = pages.map((p) => p.id);
+        const sorted = [...ids].sort((a, b) => {
+          const pa = PRIORITIES[pageStates[a]?.priority || "none"]?.sort ?? 4;
+          const pb = PRIORITIES[pageStates[b]?.priority || "none"]?.sort ?? 4;
+          return pa - pb;
+        });
+        setPageOrder((prev) => ({ ...prev, [orderKey]: sorted }));
+      };
+
+      if (section.subgroups) {
+        section.subgroups.forEach((sg) => sortGroup(sg.pages, sg.id));
+      } else {
+        sortGroup(section.pages, section.id);
+      }
+    },
+    [pageStates]
+  );
+
   // --- Get ordered sections for a tab ---
   const getOrderedSections = useCallback(
     (tabKey) => {
@@ -869,6 +987,7 @@ export default function App() {
           onUpdatePage={updatePageState}
           pageOrder={pageOrder}
           onReorderPage={reorderPage}
+          onSortByPriority={sortByPriority}
           onMoveUp={() => reorderSection(tabKey, section.id, -1)}
           onMoveDown={() => reorderSection(tabKey, section.id, 1)}
           isFirst={idx === 0}
