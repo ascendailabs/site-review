@@ -73,7 +73,9 @@ export default function PageDetailView({
   // Content audit slot summary for the tab label
   const auditSummary = useMemo(() => {
     if (!contentSlots) return "";
-    const completed = contentSlots.filter((s) => s.status === "approved" || s.status === "revised").length;
+    const completed = contentSlots.filter((s) =>
+      s.status === "approved" || s.status === "revised" || s.status === "revised_approved" || s.status === "published"
+    ).length;
     return `${completed}/${contentSlots.length}`;
   }, [contentSlots]);
 

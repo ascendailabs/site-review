@@ -19,12 +19,16 @@ import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/Delete";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import SyncIcon from "@mui/icons-material/Sync";
+import ThumbUpAltIcon from "@mui/icons-material/ThumbUpAlt";
+import PublishIcon from "@mui/icons-material/Publish";
 import { duplicateSlot, createCustomSlot } from "./data/slotTemplates";
 
 const STATUS_CONFIG = {
   untouched: { label: "Untouched", color: "#9E9E9E", bgColor: "#F5F5F5" },
   approved: { label: "Approved", color: "#2E7D32", bgColor: "#E8F5E9" },
   revised: { label: "Revised", color: "#1565C0", bgColor: "#E3F2FD" },
+  revised_approved: { label: "Revision Approved", color: "#6A1B9A", bgColor: "#F3E5F5" },
+  published: { label: "Published", color: "#00695C", bgColor: "#E0F2F1" },
 };
 
 // --- Map scraped page content to slot currentCopy values ---
@@ -274,13 +278,30 @@ function SlotRow({ slot, index, onUpdate, onDuplicate, onDelete, totalSlots }) {
     onUpdate(index, { ...slot, status: "revised" });
   }, [slot, index, onUpdate]);
 
-  const handleUndo = useCallback(() => {
-    onUpdate(index, { ...slot, status: "untouched" });
+  const handleApproveRevision = useCallback(() => {
+    onUpdate(index, { ...slot, status: "revised_approved" });
   }, [slot, index, onUpdate]);
+
+  const handleMarkPublished = useCallback(() => {
+    onUpdate(index, { ...slot, status: "published" });
+  }, [slot, index, onUpdate]);
+
+  const handleUndo = useCallback(() => {
+    // Step back one status level
+    if (status === "published") {
+      onUpdate(index, { ...slot, status: "revised_approved" });
+    } else if (status === "revised_approved") {
+      onUpdate(index, { ...slot, status: "revised" });
+    } else {
+      onUpdate(index, { ...slot, status: "untouched" });
+    }
+  }, [slot, index, onUpdate, status]);
 
   const isApproved = status === "approved";
   const isRevised = status === "revised";
-  const showStrikethrough = isApproved || isRevised;
+  const isRevisedApproved = status === "revised_approved";
+  const isPublished = status === "published";
+  const showStrikethrough = isApproved || isRevised || isRevisedApproved || isPublished;
 
   // Check if revised copy has content
   const hasRevisedContent = isCompound
@@ -355,8 +376,32 @@ function SlotRow({ slot, index, onUpdate, onDuplicate, onDelete, totalSlots }) {
             </>
           )}
 
-          {(isApproved || isRevised) && (
-            <Tooltip title="Undo">
+          {isRevised && (
+            <Tooltip title="Approve revision">
+              <IconButton
+                size="small"
+                onClick={handleApproveRevision}
+                sx={{ color: "#6A1B9A", "&:hover": { bgcolor: "#F3E5F5" } }}
+              >
+                <ThumbUpAltIcon sx={{ fontSize: 18 }} />
+              </IconButton>
+            </Tooltip>
+          )}
+
+          {isRevisedApproved && (
+            <Tooltip title="Mark as published on site">
+              <IconButton
+                size="small"
+                onClick={handleMarkPublished}
+                sx={{ color: "#00695C", "&:hover": { bgcolor: "#E0F2F1" } }}
+              >
+                <PublishIcon sx={{ fontSize: 18 }} />
+              </IconButton>
+            </Tooltip>
+          )}
+
+          {(isApproved || isRevised || isRevisedApproved || isPublished) && (
+            <Tooltip title={isPublished ? "Undo to revision approved" : isRevisedApproved ? "Undo to revised" : "Undo"}>
               <IconButton
                 size="small"
                 onClick={handleUndo}
@@ -405,7 +450,7 @@ function SlotRow({ slot, index, onUpdate, onDuplicate, onDelete, totalSlots }) {
               subFields={slot.subFields}
               value={slot.currentCopy}
               onChange={handleCurrentChange}
-              disabled={isApproved || isRevised}
+              disabled={isApproved || isRevised || isRevisedApproved || isPublished}
               strikethrough={showStrikethrough}
             />
           ) : (
@@ -418,7 +463,7 @@ function SlotRow({ slot, index, onUpdate, onDuplicate, onDelete, totalSlots }) {
               placeholder="Enter current copy..."
               value={slot.currentCopy || ""}
               onChange={(e) => handleCurrentChange(e.target.value)}
-              disabled={isApproved || isRevised}
+              disabled={isApproved || isRevised || isRevisedApproved || isPublished}
               sx={{
                 "& .MuiInputBase-input": {
                   fontSize: 13,
@@ -430,18 +475,32 @@ function SlotRow({ slot, index, onUpdate, onDuplicate, onDelete, totalSlots }) {
           )}
         </Box>
 
-        {/* Revised copy — only show when not approved */}
+        {/* Revised copy — show when not approved (current copy approved = no revision needed) */}
         {!isApproved && (
           <Box sx={{ flex: 1, minWidth: 0 }}>
             <Typography variant="caption" sx={{ color: "text.secondary", mb: 0.5, display: "block", fontWeight: 600 }}>
               Revised Copy
+              {isRevisedApproved && (
+                <Chip
+                  label="Approved"
+                  size="small"
+                  sx={{ ml: 1, fontSize: 9, height: 16, bgcolor: "#F3E5F5", color: "#6A1B9A", fontWeight: 700 }}
+                />
+              )}
+              {isPublished && (
+                <Chip
+                  label="Live on Site"
+                  size="small"
+                  sx={{ ml: 1, fontSize: 9, height: 16, bgcolor: "#E0F2F1", color: "#00695C", fontWeight: 700 }}
+                />
+              )}
             </Typography>
             {isCompound ? (
               <CompoundField
                 subFields={slot.subFields}
                 value={slot.revisedCopy}
                 onChange={handleRevisedChange}
-                disabled={isRevised}
+                disabled={isRevised || isRevisedApproved || isPublished}
                 strikethrough={false}
               />
             ) : (
@@ -454,8 +513,22 @@ function SlotRow({ slot, index, onUpdate, onDuplicate, onDelete, totalSlots }) {
                 placeholder="Enter revised copy..."
                 value={slot.revisedCopy || ""}
                 onChange={(e) => handleRevisedChange(e.target.value)}
-                disabled={isRevised}
-                sx={{ "& .MuiInputBase-input": { fontSize: 13 } }}
+                disabled={isRevised || isRevisedApproved || isPublished}
+                sx={{
+                  "& .MuiInputBase-input": { fontSize: 13 },
+                  ...(isRevisedApproved && {
+                    "& .MuiOutlinedInput-root": {
+                      borderColor: "#6A1B9A",
+                      bgcolor: "#F3E5F520",
+                    },
+                  }),
+                  ...(isPublished && {
+                    "& .MuiOutlinedInput-root": {
+                      borderColor: "#00695C",
+                      bgcolor: "#E0F2F120",
+                    },
+                  }),
+                }}
               />
             )}
           </Box>
@@ -511,10 +584,14 @@ export default function ContentAudit({ slots, onUpdateSlots, pageUrl }) {
     }
   }, [pageUrl, slots, onUpdateSlots]);
 
-  const { completed, total, pct } = useMemo(() => {
+  const { completed, total, pct, pendingPublish, published } = useMemo(() => {
     const t = slots.length;
-    const c = slots.filter((s) => s.status === "approved" || s.status === "revised").length;
-    return { completed: c, total: t, pct: t > 0 ? Math.round((c / t) * 100) : 0 };
+    const c = slots.filter((s) =>
+      s.status === "approved" || s.status === "revised" || s.status === "revised_approved" || s.status === "published"
+    ).length;
+    const pp = slots.filter((s) => s.status === "revised_approved").length;
+    const pub = slots.filter((s) => s.status === "published").length;
+    return { completed: c, total: t, pct: t > 0 ? Math.round((c / t) * 100) : 0, pendingPublish: pp, published: pub };
   }, [slots]);
 
   const updateSlot = useCallback(
@@ -571,10 +648,24 @@ export default function ContentAudit({ slots, onUpdateSlots, pageUrl }) {
           <Typography variant="body2" sx={{ fontWeight: 600, color: "text.secondary" }}>
             Content Audit Progress
           </Typography>
-          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
             <Typography variant="body2" sx={{ fontWeight: 600, color: "text.secondary" }}>
               {completed} of {total} slots completed ({pct}%)
             </Typography>
+            {pendingPublish > 0 && (
+              <Chip
+                label={`${pendingPublish} to publish`}
+                size="small"
+                sx={{ fontSize: 11, height: 20, bgcolor: "#F3E5F5", color: "#6A1B9A", fontWeight: 600 }}
+              />
+            )}
+            {published > 0 && (
+              <Chip
+                label={`${published} published`}
+                size="small"
+                sx={{ fontSize: 11, height: 20, bgcolor: "#E0F2F1", color: "#00695C", fontWeight: 600 }}
+              />
+            )}
             {pageUrl && (
               <Tooltip title="Fetch current copy from live page">
                 <span>
