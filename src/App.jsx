@@ -351,6 +351,7 @@ function PageCard({ page, pageState, onUpdate, onMoveUp, onMoveDown, isFirst, is
   const [newTodoText, setNewTodoText] = useState("");
   const [newTodoCategory, setNewTodoCategory] = useState("now");
   const [todoFilter, setTodoFilter] = useState("all");
+  const [thumbKey, setThumbKey] = useState(0);
   const markupUrl = pageState?.markupUrl || "";
   const reviewers = pageState?.reviewers || [];
   const priority = pageState?.priority || "none";
@@ -406,10 +407,6 @@ function PageCard({ page, pageState, onUpdate, onMoveUp, onMoveDown, isFirst, is
         {/* Thumbnail */}
         {showThumbnail && (
           <Box
-            component="a"
-            href={page.url}
-            target="_blank"
-            rel="noopener noreferrer"
             sx={{
               flexShrink: 0,
               width: 200,
@@ -418,25 +415,52 @@ function PageCard({ page, pageState, onUpdate, onMoveUp, onMoveDown, isFirst, is
               overflow: "hidden",
               border: "1px solid #E0E0E0",
               position: "relative",
-              cursor: "pointer",
               bgcolor: "#FAFAFA",
-              "&:hover": { borderColor: "#3498DC" },
+              "&:hover .thumb-reload": { opacity: 1 },
             }}
           >
-            <iframe
-              src={page.url}
-              title={`Preview of ${page.name}`}
-              loading="lazy"
-              sandbox="allow-same-origin"
-              style={{
-                width: 1600,
-                height: 1040,
-                transform: "scale(0.125)",
-                transformOrigin: "top left",
-                border: "none",
-                pointerEvents: "none",
-              }}
-            />
+            <Box
+              component="a"
+              href={page.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              sx={{ display: "block", width: "100%", height: "100%", cursor: "pointer" }}
+            >
+              <iframe
+                key={thumbKey}
+                src={page.url}
+                title={`Preview of ${page.name}`}
+                loading="lazy"
+                sandbox="allow-same-origin"
+                style={{
+                  width: 1600,
+                  height: 1040,
+                  transform: "scale(0.125)",
+                  transformOrigin: "top left",
+                  border: "none",
+                  pointerEvents: "none",
+                }}
+              />
+            </Box>
+            <Tooltip title="Reload thumbnail">
+              <IconButton
+                className="thumb-reload"
+                size="small"
+                onClick={() => setThumbKey((k) => k + 1)}
+                sx={{
+                  position: "absolute",
+                  top: 4,
+                  right: 4,
+                  bgcolor: "rgba(255,255,255,0.85)",
+                  opacity: 0,
+                  transition: "opacity 0.2s",
+                  p: 0.5,
+                  "&:hover": { bgcolor: "rgba(255,255,255,1)" },
+                }}
+              >
+                <SyncIcon sx={{ fontSize: 16, color: "#1976D2" }} />
+              </IconButton>
+            </Tooltip>
           </Box>
         )}
         <Box sx={{ flex: 1, minWidth: 0 }}>
