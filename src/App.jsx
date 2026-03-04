@@ -51,6 +51,7 @@ import SortIcon from "@mui/icons-material/Sort";
 import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/Delete";
 import PlaylistAddCheckIcon from "@mui/icons-material/PlaylistAddCheck";
+import VisibilityIcon from "@mui/icons-material/Visibility";
 
 import { STATUSES, STATUS_KEYS } from "./data/statuses";
 import { SITE_SECTIONS } from "./data/siteSections";
@@ -339,7 +340,7 @@ function ReviewerRow({ reviewer, onChange, onRemove }) {
 }
 
 // --- PageCard ---
-function PageCard({ page, pageState, onUpdate, onMoveUp, onMoveDown, isFirst, isLast, onRemove }) {
+function PageCard({ page, pageState, onUpdate, onMoveUp, onMoveDown, isFirst, isLast, onRemove, showThumbnail }) {
   const [editingMarkup, setEditingMarkup] = useState(false);
   const [markupDraft, setMarkupDraft] = useState("");
   const [editingPurpose, setEditingPurpose] = useState(false);
@@ -401,7 +402,44 @@ function PageCard({ page, pageState, onUpdate, onMoveUp, onMoveDown, isFirst, is
         transition: "border-color 0.2s",
       }}
     >
-      <Box sx={{ p: 1.5 }}>
+      <Box sx={{ p: 1.5, display: "flex", gap: 1.5 }}>
+        {/* Thumbnail */}
+        {showThumbnail && (
+          <Box
+            component="a"
+            href={page.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            sx={{
+              flexShrink: 0,
+              width: 200,
+              height: 130,
+              borderRadius: 1,
+              overflow: "hidden",
+              border: "1px solid #E0E0E0",
+              position: "relative",
+              cursor: "pointer",
+              bgcolor: "#FAFAFA",
+              "&:hover": { borderColor: "#3498DC" },
+            }}
+          >
+            <iframe
+              src={page.url}
+              title={`Preview of ${page.name}`}
+              loading="lazy"
+              sandbox="allow-same-origin"
+              style={{
+                width: 1600,
+                height: 1040,
+                transform: "scale(0.125)",
+                transformOrigin: "top left",
+                border: "none",
+                pointerEvents: "none",
+              }}
+            />
+          </Box>
+        )}
+        <Box sx={{ flex: 1, minWidth: 0 }}>
         {/* Top row */}
         <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
           <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
@@ -752,6 +790,7 @@ function PageCard({ page, pageState, onUpdate, onMoveUp, onMoveDown, isFirst, is
           )}
         </Box>
       </Box>
+      </Box>
     </Card>
   );
 }
@@ -777,6 +816,7 @@ function SectionGroup({
   statusFilter,
   hideFinished,
   hideDeferred,
+  showThumbnails,
 }) {
   const [expanded, setExpanded] = useState(section.collapsed !== true);
   const [editingDesc, setEditingDesc] = useState(false);
@@ -991,6 +1031,7 @@ function SectionGroup({
                         isFirst={idx === 0}
                         isLast={idx === orderedPages.length - 1}
                         onRemove={page.id.startsWith("custom-pg-") ? () => onRemovePage(page.id) : undefined}
+                        showThumbnail={showThumbnails}
                       />
                     ))}
                   </Box>
@@ -1007,6 +1048,7 @@ function SectionGroup({
                   isFirst={idx === 0}
                   isLast={idx === visiblePages.length - 1}
                   onRemove={page.id.startsWith("custom-pg-") ? () => onRemovePage(page.id) : undefined}
+                  showThumbnail={showThumbnails}
                 />
               ))}
           {/* Add Page */}
@@ -1080,6 +1122,7 @@ export default function App() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [hideFinished, setHideFinished] = useState(false);
   const [hideDeferred, setHideDeferred] = useState(false);
+  const [showThumbnails, setShowThumbnails] = useState(false);
   const [saveStatus, setSaveStatus] = useState("idle"); // idle | saving | saved | error
   const [loaded, setLoaded] = useState(false);
   const [addingSection, setAddingSection] = useState(false);
@@ -1476,6 +1519,21 @@ export default function App() {
               border: `1px solid ${hideDeferred ? "#78909C" : "#E0E0E0"}`,
             }}
           />
+          <Chip
+            icon={<VisibilityIcon sx={{ fontSize: 16 }} />}
+            label="Thumbnails"
+            size="small"
+            variant={showThumbnails ? "filled" : "outlined"}
+            onClick={() => setShowThumbnails(!showThumbnails)}
+            sx={{
+              cursor: "pointer",
+              fontWeight: 600,
+              fontSize: 12,
+              bgcolor: showThumbnails ? "#E3F2FD" : "transparent",
+              color: showThumbnails ? "#1976D2" : "text.secondary",
+              border: `1px solid ${showThumbnails ? "#1976D2" : "#E0E0E0"}`,
+            }}
+          />
           {saveIndicator}
           <Box sx={{ display: "flex", gap: 1 }}>
             <Button
@@ -1552,6 +1610,7 @@ export default function App() {
           statusFilter={statusFilter}
           hideFinished={hideFinished}
           hideDeferred={hideDeferred}
+          showThumbnails={showThumbnails}
         />
       ))}
 
