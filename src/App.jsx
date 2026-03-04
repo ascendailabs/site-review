@@ -56,6 +56,7 @@ import VisibilityIcon from "@mui/icons-material/Visibility";
 import { STATUSES, STATUS_KEYS } from "./data/statuses";
 import { SITE_SECTIONS } from "./data/siteSections";
 import { OUTREACH_SECTIONS } from "./data/outreachSections";
+import AnnotationsPanel from "./AnnotationsPanel";
 
 const ICON_MAP = {
   Bolt: BoltIcon,
@@ -1423,7 +1424,7 @@ export default function App() {
   };
 
   // --- Compute active sections and pages (merge custom pages into section objects) ---
-  const tabKey = tab === 0 ? "site" : "outreach";
+  const tabKey = ["site", "outreach", "annotations"][tab] || "site";
   const orderedSections = useMemo(() => {
     const base = getOrderedSections(tabKey);
     return base.map((s) => {
@@ -1611,8 +1612,20 @@ export default function App() {
       >
         <Tab label={`Website Pages (${totalPages("site")})`} />
         <Tab label={`Pages for Outreach (${totalPages("outreach")})`} />
+        <Tab label="Annotations" />
       </Tabs>
 
+      {tab === 2 ? (
+        <AnnotationsPanel
+          pageStates={pageStates}
+          updatePageState={updatePageState}
+          siteSections={SITE_SECTIONS}
+          outreachSections={OUTREACH_SECTIONS}
+          customSections={customSections}
+          sectionMeta={sectionMeta}
+        />
+      ) : (
+      <>
       {/* Overall progress bar */}
       <Box sx={{ mb: 3 }}>
         <ProgressBar pages={allPages} pageStates={pageStates} height={8} />
@@ -1699,6 +1712,8 @@ export default function App() {
             sx={{ cursor: "pointer", borderStyle: "dashed" }}
           />
         </Box>
+      )}
+      </>
       )}
 
       {/* Footer */}

@@ -14,8 +14,8 @@ export default async function handler(req, res) {
 
   if (req.method === "POST") {
     try {
-      const { pageStates, sectionOrder, pageOrder } = req.body;
-      const state = { pageStates, sectionOrder, pageOrder, savedAt: new Date().toISOString(), version: 2 };
+      const { pageStates, sectionOrder, pageOrder, sectionMeta, customSections } = req.body;
+      const state = { pageStates, sectionOrder, pageOrder, sectionMeta, customSections, savedAt: new Date().toISOString(), version: 3 };
       await kv.set("review-state", state);
       return res.status(200).json({ success: true, savedAt: state.savedAt });
     } catch (err) {
