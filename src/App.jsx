@@ -344,7 +344,7 @@ function ReviewerRow({ reviewer, onChange, onRemove }) {
 }
 
 // --- PageCard ---
-function PageCard({ page, pageState, onUpdate, onMoveUp, onMoveDown, isFirst, isLast, onRemove, showThumbnail }) {
+function PageCard({ page, pageState, onUpdate, onMoveUp, onMoveDown, isFirst, isLast, onRemove, showThumbnail, onAnnotate }) {
   const [editingMarkup, setEditingMarkup] = useState(false);
   const [markupDraft, setMarkupDraft] = useState("");
   const [editingPurpose, setEditingPurpose] = useState(false);
@@ -628,6 +628,30 @@ function PageCard({ page, pageState, onUpdate, onMoveUp, onMoveDown, isFirst, is
               sx={{ width: 300, "& .MuiInputBase-input": { fontSize: 13, py: 0.5 } }}
             />
           )}
+
+          {/* Annotation indicator */}
+          {(() => {
+            const ann = pageState?.annotationSummary;
+            if (!ann || (ann.open === 0 && ann.resolved === 0)) return null;
+            const hasOpen = ann.open > 0;
+            return (
+              <Chip
+                label={`${ann.open} open / ${ann.resolved} resolved`}
+                size="small"
+                onClick={onAnnotate}
+                sx={{
+                  bgcolor: hasOpen ? "#FFEBEE" : "#E8F5E9",
+                  color: hasOpen ? "#D32F2F" : "#2E7D32",
+                  fontWeight: 600,
+                  fontSize: 11,
+                  height: 24,
+                  border: `1px solid ${hasOpen ? "#D32F2F" : "#2E7D32"}`,
+                  cursor: "pointer",
+                  "&:hover": { opacity: 0.85 },
+                }}
+              />
+            );
+          })()}
         </Box>
 
         {/* Reviewers */}
@@ -845,6 +869,7 @@ function SectionGroup({
   hideFinished,
   hideDeferred,
   showThumbnails,
+  onAnnotate,
 }) {
   const [expanded, setExpanded] = useState(section.collapsed !== true);
   const [editingDesc, setEditingDesc] = useState(false);
@@ -1060,6 +1085,7 @@ function SectionGroup({
                         isLast={idx === orderedPages.length - 1}
                         onRemove={page.id.startsWith("custom-pg-") ? () => onRemovePage(page.id) : undefined}
                         showThumbnail={showThumbnails}
+                        onAnnotate={onAnnotate ? () => onAnnotate(page.id) : undefined}
                       />
                     ))}
                   </Box>
@@ -1077,6 +1103,7 @@ function SectionGroup({
                   isLast={idx === visiblePages.length - 1}
                   onRemove={page.id.startsWith("custom-pg-") ? () => onRemovePage(page.id) : undefined}
                   showThumbnail={showThumbnails}
+                  onAnnotate={onAnnotate ? () => onAnnotate(page.id) : undefined}
                 />
               ))}
           {/* Add Page */}
@@ -1156,6 +1183,12 @@ export default function App() {
   const [addingSection, setAddingSection] = useState(false);
   const [newSectionName, setNewSectionName] = useState("");
   const [newSectionIcon, setNewSectionIcon] = useState("Bolt");
+  const [annotationPageId, setAnnotationPageId] = useState(null);
+
+  const navigateToAnnotation = useCallback((pageId) => {
+    setAnnotationPageId(pageId);
+    setTab(2);
+  }, []);
 
   const saveTimer = useRef(null);
   const skipNextSave = useRef(false);
@@ -1623,6 +1656,7 @@ export default function App() {
           outreachSections={OUTREACH_SECTIONS}
           customSections={customSections}
           sectionMeta={sectionMeta}
+          initialPageId={annotationPageId}
         />
       ) : (
       <>
@@ -1655,6 +1689,7 @@ export default function App() {
           hideFinished={hideFinished}
           hideDeferred={hideDeferred}
           showThumbnails={showThumbnails}
+          onAnnotate={navigateToAnnotation}
         />
       ))}
 

@@ -520,8 +520,8 @@ function ScreenshotViewer({ screenshots, selectedVersion, onSelectVersion, onCre
 }
 
 // ─── Annotations Panel (main export) ──────────────────────
-export default function AnnotationsPanel({ pageStates, updatePageState, siteSections, outreachSections, customSections, sectionMeta }) {
-  const [selectedPageId, setSelectedPageId] = useState(null);
+export default function AnnotationsPanel({ pageStates, updatePageState, siteSections, outreachSections, customSections, sectionMeta, initialPageId }) {
+  const [selectedPageId, setSelectedPageId] = useState(initialPageId || null);
   const [searchTerm, setSearchTerm] = useState("");
   const [screenshots, setScreenshots] = useState([]);
   const [selectedVersion, setSelectedVersion] = useState(0);
@@ -530,6 +530,11 @@ export default function AnnotationsPanel({ pageStates, updatePageState, siteSect
   const saveTimer = useRef(null);
   const uploadInputRef = useRef(null);
   const [uploading, setUploading] = useState(false);
+
+  // Navigate to page when coming from PageCard annotation chip
+  useEffect(() => {
+    if (initialPageId) setSelectedPageId(initialPageId);
+  }, [initialPageId]);
 
   // Build grouped page list
   const sections = getAllPages(siteSections, outreachSections, customSections, sectionMeta);
