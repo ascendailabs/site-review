@@ -274,12 +274,15 @@ function ReviewerRow({ reviewer, onChange, onRemove }) {
   return (
     <Box sx={{ mb: 1, pl: 1, borderLeft: `3px solid ${rs.color}`, borderRadius: 1 }}>
       <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
-        <Typography variant="body2" sx={{ fontWeight: 600 }}>{reviewer.name}</Typography>
-        <Typography variant="caption" color="text.secondary">{reviewer.date}</Typography>
-        <Box sx={{ flex: 1 }} />
-        <IconButton size="small" onClick={() => setNotesOpen(!notesOpen)} sx={{ p: 0.25, color: reviewer.note ? "primary.main" : "text.secondary" }}>
-          <NotesIcon sx={{ fontSize: 16 }} />
-        </IconButton>
+        <Box
+          onClick={() => setNotesOpen(!notesOpen)}
+          sx={{ display: "flex", alignItems: "center", gap: 0.75, flex: 1, cursor: "pointer", borderRadius: 0.5, "&:hover": { bgcolor: "action.hover" } }}
+        >
+          <Typography variant="body2" sx={{ fontWeight: 600 }}>{reviewer.name}</Typography>
+          <Typography variant="caption" color="text.secondary">{reviewer.date}</Typography>
+          <Box sx={{ flex: 1 }} />
+          <NotesIcon sx={{ fontSize: 16, color: reviewer.note ? "primary.main" : "text.secondary" }} />
+        </Box>
         {/* Status picker */}
         <Chip
           label={rs.label}
@@ -1559,7 +1562,7 @@ export default function App() {
             }}
           />
           {saveIndicator}
-          <Box sx={{ display: "flex", gap: 1 }}>
+          <Box sx={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 0.5 }}>
             <Button
               variant="contained"
               size="small"
@@ -1569,22 +1572,26 @@ export default function App() {
             >
               Save
             </Button>
-            <Button
-              variant="outlined"
-              size="small"
-              startIcon={<CloudDownload />}
-              onClick={handleBackup}
-            >
-              Backup
-            </Button>
-            <Button
-              variant="outlined"
-              size="small"
-              startIcon={<CloudUpload />}
-              onClick={() => fileInputRef.current?.click()}
-            >
-              Restore
-            </Button>
+            <Box sx={{ display: "flex", gap: 0.5 }}>
+              <Button
+                variant="text"
+                size="small"
+                startIcon={<CloudDownload />}
+                onClick={handleBackup}
+                sx={{ fontSize: 11, py: 0, px: 0.75, minWidth: 0, color: "text.secondary", textTransform: "none" }}
+              >
+                Backup
+              </Button>
+              <Button
+                variant="text"
+                size="small"
+                startIcon={<CloudUpload />}
+                onClick={() => fileInputRef.current?.click()}
+                sx={{ fontSize: 11, py: 0, px: 0.75, minWidth: 0, color: "text.secondary", textTransform: "none" }}
+              >
+                Restore
+              </Button>
+            </Box>
             <input
               ref={fileInputRef}
               type="file"
