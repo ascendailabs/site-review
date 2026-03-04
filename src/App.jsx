@@ -57,6 +57,7 @@ import { STATUSES, STATUS_KEYS } from "./data/statuses";
 import { SITE_SECTIONS } from "./data/siteSections";
 import { OUTREACH_SECTIONS } from "./data/outreachSections";
 import AnnotationsPanel from "./AnnotationsPanel";
+import PageDetailView from "./PageDetailView";
 
 const ICON_MAP = {
   Bolt: BoltIcon,
@@ -344,7 +345,7 @@ function ReviewerRow({ reviewer, onChange, onRemove }) {
 }
 
 // --- PageCard ---
-function PageCard({ page, pageState, onUpdate, onMoveUp, onMoveDown, isFirst, isLast, onRemove, showThumbnail, onAnnotate }) {
+function PageCard({ page, pageState, onUpdate, onMoveUp, onMoveDown, isFirst, isLast, onRemove, showThumbnail, onAnnotate, onDetail }) {
   const [editingMarkup, setEditingMarkup] = useState(false);
   const [markupDraft, setMarkupDraft] = useState("");
   const [editingPurpose, setEditingPurpose] = useState(false);
@@ -497,7 +498,17 @@ function PageCard({ page, pageState, onUpdate, onMoveUp, onMoveDown, isFirst, is
               "&:hover": { opacity: 0.85 },
             }}
           />
-          <Typography variant="body1" sx={{ fontWeight: 600, mr: 0.5 }}>
+          <Typography
+            variant="body1"
+            onClick={onDetail}
+            sx={{
+              fontWeight: 600,
+              mr: 0.5,
+              cursor: onDetail ? "pointer" : "default",
+              "&:hover": onDetail ? { color: "#3498DC" } : {},
+              transition: "color 0.15s",
+            }}
+          >
             {page.name}
           </Typography>
           <Chip
@@ -870,6 +881,7 @@ function SectionGroup({
   hideDeferred,
   showThumbnails,
   onAnnotate,
+  onDetail,
 }) {
   const [expanded, setExpanded] = useState(section.collapsed !== true);
   const [editingDesc, setEditingDesc] = useState(false);
@@ -1086,6 +1098,7 @@ function SectionGroup({
                         onRemove={page.id.startsWith("custom-pg-") ? () => onRemovePage(page.id) : undefined}
                         showThumbnail={showThumbnails}
                         onAnnotate={onAnnotate ? () => onAnnotate(page.id) : undefined}
+                        onDetail={onDetail ? () => onDetail(page.id) : undefined}
                       />
                     ))}
                   </Box>
@@ -1104,6 +1117,7 @@ function SectionGroup({
                   onRemove={page.id.startsWith("custom-pg-") ? () => onRemovePage(page.id) : undefined}
                   showThumbnail={showThumbnails}
                   onAnnotate={onAnnotate ? () => onAnnotate(page.id) : undefined}
+                  onDetail={onDetail ? () => onDetail(page.id) : undefined}
                 />
               ))}
           {/* Add Page */}
@@ -1184,10 +1198,15 @@ export default function App() {
   const [newSectionName, setNewSectionName] = useState("");
   const [newSectionIcon, setNewSectionIcon] = useState("Bolt");
   const [annotationPageId, setAnnotationPageId] = useState(null);
+  const [detailPageId, setDetailPageId] = useState(null);
 
   const navigateToAnnotation = useCallback((pageId) => {
     setAnnotationPageId(pageId);
     setTab(2);
+  }, []);
+
+  const navigateToDetail = useCallback((pageId) => {
+    setDetailPageId(pageId);
   }, []);
 
   const saveTimer = useRef(null);
@@ -1472,6 +1491,22 @@ export default function App() {
     [orderedSections]
   );
 
+  // --- Find page object by ID across all sections ---
+  const detailPage = useMemo(() => {
+    if (!detailPageId) return null;
+    const allSections = [...SITE_SECTIONS, ...OUTREACH_SECTIONS, ...(customSections.site || []), ...(customSections.outreach || [])];
+    for (const section of allSections) {
+      const pages = getSectionPages(section);
+      const found = pages.find((p) => p.id === detailPageId);
+      if (found) return found;
+      // Check custom pages in sectionMeta
+      const cp = sectionMeta[section.id]?.customPages || [];
+      const foundCustom = cp.find((p) => p.id === detailPageId);
+      if (foundCustom) return foundCustom;
+    }
+    return null;
+  }, [detailPageId, customSections, sectionMeta]);
+
   // --- Page counts per tab (including custom sections + pages) ---
   const totalPages = useCallback(
     (tk) => {
@@ -1637,6 +1672,22 @@ export default function App() {
         </Stack>
       </Paper>
 
+      {/* Detail View OR Tabs */}
+      {detailPageId && detailPage ? (
+        <PageDetailView
+          page={detailPage}
+          pageState={pageStates[detailPageId] || {}}
+          onUpdate={(state) => updatePageState(detailPageId, state)}
+          onBack={() => setDetailPageId(null)}
+          pageStates={pageStates}
+          updatePageState={updatePageState}
+          siteSections={SITE_SECTIONS}
+          outreachSections={OUTREACH_SECTIONS}
+          customSections={customSections}
+          sectionMeta={sectionMeta}
+        />
+      ) : (
+      <>
       {/* Tabs */}
       <Tabs
         value={tab}
@@ -1690,6 +1741,7 @@ export default function App() {
           hideDeferred={hideDeferred}
           showThumbnails={showThumbnails}
           onAnnotate={navigateToAnnotation}
+          onDetail={navigateToDetail}
         />
       ))}
 
@@ -1755,6 +1807,8 @@ export default function App() {
       <Typography variant="body2" color="text.secondary" sx={{ textAlign: "center", mt: 4, mb: 2 }}>
         Ascend Labs Website Review Tracker
       </Typography>
+      </>
+      )}
     </Box>
   );
 }
