@@ -144,7 +144,7 @@ export default function PageDetailView({
       {subTab === 0 && (
         <Box>
           {contentSlots ? (
-            <ContentAudit slots={contentSlots} onUpdateSlots={handleUpdateSlots} />
+            <ContentAudit slots={contentSlots} onUpdateSlots={handleUpdateSlots} pageUrl={page.url} />
           ) : (
             <Typography variant="body2" color="text.secondary">
               Loading content slots...

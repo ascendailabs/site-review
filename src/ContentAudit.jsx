@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   Box,
   Typography,
@@ -9,6 +9,8 @@ import {
   Tooltip,
   LinearProgress,
   Divider,
+  CircularProgress,
+  Alert,
 } from "@mui/material";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import EditIcon from "@mui/icons-material/Edit";
@@ -16,6 +18,7 @@ import UndoIcon from "@mui/icons-material/Undo";
 import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/Delete";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
+import SyncIcon from "@mui/icons-material/Sync";
 import { duplicateSlot, createCustomSlot } from "./data/slotTemplates";
 
 const STATUS_CONFIG = {
@@ -23,6 +26,196 @@ const STATUS_CONFIG = {
   approved: { label: "Approved", color: "#2E7D32", bgColor: "#E8F5E9" },
   revised: { label: "Revised", color: "#1565C0", bgColor: "#E3F2FD" },
 };
+
+// --- Map scraped page content to slot currentCopy values ---
+function mapScrapedToSlots(scraped, slots) {
+  if (!scraped) return slots;
+
+  const updated = slots.map((slot) => {
+    // Skip slots that already have content or are approved/revised
+    if (slot.status !== "untouched") return slot;
+    const hasContent = slot.subFields
+      ? slot.subFields.some((f) => (slot.currentCopy?.[f] || "").trim())
+      : (slot.currentCopy || "").trim();
+    if (hasContent) return slot;
+
+    const baseId = slot.id.replace(/-copy-\d+$/, "");
+    let value = null;
+
+    switch (baseId) {
+      case "slot-meta-title":
+        value = scraped.metaTitle || null;
+        break;
+      case "slot-meta-description":
+        value = scraped.metaDescription || null;
+        break;
+      case "slot-hero-headline":
+        value = scraped.h1s?.[0] || null;
+        break;
+      case "slot-hero-subheadline":
+        value = scraped.paragraphs?.[0] || null;
+        break;
+      case "slot-hero-cta":
+        value = scraped.buttons?.[0] || null;
+        break;
+      case "slot-intro-paragraph":
+        value = scraped.paragraphs?.[1] || scraped.paragraphs?.[0] || null;
+        break;
+      case "slot-course-overview":
+        value = scraped.paragraphs?.[1] || scraped.paragraphs?.[0] || null;
+        break;
+      case "slot-target-audience":
+        value = findContentByKeyword(scraped, ["audience", "who", "designed for"]);
+        break;
+      case "slot-instructor-bio":
+        value = findContentByKeyword(scraped, ["instructor", "taught by", "facilitator"]);
+        break;
+      case "slot-mission-statement":
+        value = findContentByKeyword(scraped, ["mission", "purpose", "believe"]);
+        break;
+      case "slot-team-intro":
+        value = findContentByKeyword(scraped, ["team", "people", "leadership"]);
+        break;
+      case "slot-pricing-headline":
+        value = findHeadingByKeyword(scraped, ["pricing", "price", "cost", "invest"]);
+        break;
+      case "slot-pricing-description":
+        value = findContentByKeyword(scraped, ["pricing", "price", "cost", "invest", "per month", "per year"]);
+        break;
+      case "slot-features-headline": {
+        value = findHeadingByKeyword(scraped, ["feature", "what you get", "capabilities", "includes"]);
+        break;
+      }
+      case "slot-process-headline": {
+        value = findHeadingByKeyword(scraped, ["process", "how it works", "how we", "steps", "approach"]);
+        break;
+      }
+      case "slot-bottom-cta-headline": {
+        // Last h2 is often the bottom CTA section
+        value = scraped.h2s?.[scraped.h2s.length - 1] || null;
+        break;
+      }
+      case "slot-bottom-cta-subtext": {
+        // Last paragraph often accompanies the bottom CTA
+        value = scraped.paragraphs?.[scraped.paragraphs.length - 1] || null;
+        break;
+      }
+      case "slot-bottom-cta-button": {
+        // Last button is often the bottom CTA
+        value = scraped.buttons?.[scraped.buttons.length - 1] || scraped.buttons?.[0] || null;
+        break;
+      }
+      default:
+        break;
+    }
+
+    // Handle compound slots from sections
+    if (!value && slot.subFields && scraped.sections?.length > 0) {
+      const sectionMapping = mapCompoundSlot(baseId, slot, scraped);
+      if (sectionMapping) return { ...slot, currentCopy: sectionMapping };
+    }
+
+    // Handle repeatable simple slots
+    if (!value && slot.isRepeatable && !slot.subFields) {
+      const repeatable = mapRepeatableSlot(baseId, slot, scraped);
+      if (repeatable) value = repeatable;
+    }
+
+    if (value && !slot.subFields) {
+      return { ...slot, currentCopy: value };
+    }
+
+    return slot;
+  });
+
+  return updated;
+}
+
+function findContentByKeyword(scraped, keywords) {
+  // Search paragraphs for keyword matches
+  for (const p of scraped.paragraphs || []) {
+    const lower = p.toLowerCase();
+    if (keywords.some((k) => lower.includes(k))) return p;
+  }
+  // Search sections
+  for (const s of scraped.sections || []) {
+    const headLower = (s.heading || "").toLowerCase();
+    if (keywords.some((k) => headLower.includes(k))) {
+      return s.paragraphs?.[0] || null;
+    }
+  }
+  return null;
+}
+
+function findHeadingByKeyword(scraped, keywords) {
+  for (const h of scraped.h2s || []) {
+    const lower = h.toLowerCase();
+    if (keywords.some((k) => lower.includes(k))) return h;
+  }
+  return null;
+}
+
+function mapCompoundSlot(baseId, slot, scraped) {
+  const sections = scraped.sections || [];
+  const slotKeywords = {
+    "slot-value-prop": ["value", "benefit", "why", "advantage"],
+    "slot-feature": ["feature", "capability", "what you get", "includes"],
+    "slot-process-step": ["process", "step", "how", "approach"],
+    "slot-faq": ["faq", "question", "asked"],
+    "slot-body-section": [],
+    "slot-module": ["module", "curriculum", "lesson", "unit", "week"],
+    "slot-learning-outcome": ["learn", "outcome", "objective", "skill"],
+  };
+
+  const keywords = slotKeywords[baseId];
+  if (!keywords) return null;
+
+  // For FAQ slots, look for Q&A patterns
+  if (baseId === "slot-faq" && slot.subFields?.includes("question")) {
+    const faqSection = sections.find((s) =>
+      (s.heading || "").toLowerCase().includes("faq") ||
+      (s.heading || "").toLowerCase().includes("question")
+    );
+    if (faqSection && faqSection.paragraphs?.length >= 2) {
+      return { question: faqSection.paragraphs[0], answer: faqSection.paragraphs[1] };
+    }
+    return null;
+  }
+
+  // For compound slots with headline + description, map from sections
+  if (slot.subFields?.includes("headline") && slot.subFields?.includes("description")) {
+    // Find a matching section
+    let matchedSection = null;
+    if (keywords.length > 0) {
+      matchedSection = sections.find((s) => {
+        const headLower = (s.heading || "").toLowerCase();
+        return keywords.some((k) => headLower.includes(k));
+      });
+    }
+    // Fallback: use sections in order (skip first which is often hero)
+    if (!matchedSection && baseId === "slot-body-section") {
+      matchedSection = sections[1] || sections[0];
+    }
+    if (matchedSection) {
+      return {
+        headline: matchedSection.heading || "",
+        description: matchedSection.paragraphs?.[0] || "",
+      };
+    }
+  }
+
+  return null;
+}
+
+function mapRepeatableSlot(baseId, slot, scraped) {
+  if (baseId === "slot-social-proof") {
+    return findContentByKeyword(scraped, ["testimonial", "review", "said", "client", "customer"]);
+  }
+  if (baseId === "slot-learning-outcome") {
+    return findContentByKeyword(scraped, ["learn", "outcome", "by the end", "able to"]);
+  }
+  return null;
+}
 
 function CompoundField({ subFields, value, onChange, disabled, strikethrough }) {
   return (
@@ -272,9 +465,51 @@ function SlotRow({ slot, index, onUpdate, onDuplicate, onDelete, totalSlots }) {
   );
 }
 
-export default function ContentAudit({ slots, onUpdateSlots }) {
+export default function ContentAudit({ slots, onUpdateSlots, pageUrl }) {
   const [addingCustom, setAddingCustom] = useState(false);
   const [customLabel, setCustomLabel] = useState("");
+  const [fetching, setFetching] = useState(false);
+  const [fetchError, setFetchError] = useState(null);
+  const [fetched, setFetched] = useState(false);
+  const autoFetchDone = useRef(false);
+
+  // Auto-fetch current copy on first mount when all slots are empty
+  useEffect(() => {
+    if (autoFetchDone.current || !pageUrl || !slots || slots.length === 0) return;
+    // Check if any slot already has currentCopy content
+    const hasAnyContent = slots.some((s) => {
+      if (s.subFields) return s.subFields.some((f) => (s.currentCopy?.[f] || "").trim());
+      return (s.currentCopy || "").trim();
+    });
+    if (hasAnyContent) {
+      autoFetchDone.current = true;
+      return;
+    }
+    autoFetchDone.current = true;
+    fetchCurrentCopy();
+  }, [pageUrl, slots]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const fetchCurrentCopy = useCallback(async () => {
+    if (!pageUrl) return;
+    setFetching(true);
+    setFetchError(null);
+    try {
+      const res = await fetch(`/api/scrape?url=${encodeURIComponent(pageUrl)}`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `Failed (${res.status})`);
+      }
+      const scraped = await res.json();
+      const mapped = mapScrapedToSlots(scraped, slots);
+      onUpdateSlots(mapped);
+      setFetched(true);
+    } catch (err) {
+      console.error("Fetch current copy error:", err);
+      setFetchError(err.message);
+    } finally {
+      setFetching(false);
+    }
+  }, [pageUrl, slots, onUpdateSlots]);
 
   const { completed, total, pct } = useMemo(() => {
     const t = slots.length;
@@ -331,14 +566,32 @@ export default function ContentAudit({ slots, onUpdateSlots }) {
   return (
     <Box>
       {/* Progress bar */}
-      <Box sx={{ mb: 3 }}>
-        <Box sx={{ display: "flex", justifyContent: "space-between", mb: 0.5 }}>
+      <Box sx={{ mb: 2 }}>
+        <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 0.5 }}>
           <Typography variant="body2" sx={{ fontWeight: 600, color: "text.secondary" }}>
             Content Audit Progress
           </Typography>
-          <Typography variant="body2" sx={{ fontWeight: 600, color: "text.secondary" }}>
-            {completed} of {total} slots completed ({pct}%)
-          </Typography>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+            <Typography variant="body2" sx={{ fontWeight: 600, color: "text.secondary" }}>
+              {completed} of {total} slots completed ({pct}%)
+            </Typography>
+            {pageUrl && (
+              <Tooltip title="Fetch current copy from live page">
+                <span>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    startIcon={fetching ? <CircularProgress size={14} /> : <SyncIcon sx={{ fontSize: 16 }} />}
+                    onClick={fetchCurrentCopy}
+                    disabled={fetching}
+                    sx={{ fontSize: 11, py: 0.25, textTransform: "none" }}
+                  >
+                    {fetching ? "Fetching..." : "Fetch Current Copy"}
+                  </Button>
+                </span>
+              </Tooltip>
+            )}
+          </Box>
         </Box>
         <LinearProgress
           variant="determinate"
@@ -354,6 +607,28 @@ export default function ContentAudit({ slots, onUpdateSlots }) {
           }}
         />
       </Box>
+
+      {/* Fetch status messages */}
+      {fetchError && (
+        <Alert severity="warning" sx={{ mb: 2, fontSize: 13 }} onClose={() => setFetchError(null)}>
+          Could not fetch page content: {fetchError}. You can enter current copy manually.
+        </Alert>
+      )}
+      {fetched && !fetchError && (
+        <Alert severity="success" sx={{ mb: 2, fontSize: 13 }} onClose={() => setFetched(false)}>
+          Current copy populated from live page. Review and adjust as needed.
+        </Alert>
+      )}
+
+      {/* Loading overlay */}
+      {fetching && (
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 2, p: 1.5, bgcolor: "#FFF3E0", borderRadius: 2 }}>
+          <CircularProgress size={18} sx={{ color: "#E65100" }} />
+          <Typography variant="body2" sx={{ color: "#E65100", fontWeight: 500 }}>
+            Fetching content from {pageUrl}...
+          </Typography>
+        </Box>
+      )}
 
       {/* Legend */}
       <Box sx={{ display: "flex", gap: 2, mb: 2, flexWrap: "wrap" }}>
