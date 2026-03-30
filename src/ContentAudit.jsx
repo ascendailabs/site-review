@@ -864,7 +864,7 @@ export default function ContentAudit({ slots, onUpdateSlots, pageUrl }) {
             <input
               ref={artifactInputRef}
               type="file"
-              accept=".html,.htm"
+              accept=".html,.htm,.mhtml"
               style={{ display: "none" }}
               onChange={handleArtifactImport}
             />
