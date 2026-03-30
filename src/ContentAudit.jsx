@@ -11,6 +11,7 @@ import {
   Divider,
   CircularProgress,
   Alert,
+  Collapse,
 } from "@mui/material";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import EditIcon from "@mui/icons-material/Edit";
@@ -19,6 +20,8 @@ import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/Delete";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import SyncIcon from "@mui/icons-material/Sync";
+import UploadFileIcon from "@mui/icons-material/UploadFile";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import ThumbUpAltIcon from "@mui/icons-material/ThumbUpAlt";
 import PublishIcon from "@mui/icons-material/Publish";
 import { duplicateSlot, createCustomSlot } from "./data/slotTemplates";
@@ -219,6 +222,133 @@ function mapRepeatableSlot(baseId, slot, scraped) {
     return findContentByKeyword(scraped, ["learn", "outcome", "by the end", "able to"]);
   }
   return null;
+}
+
+// --- Map parsed artifact content to slot revisedCopy values ---
+function mapArtifactToSlots(parsed, slots) {
+  if (!parsed) return { updatedSlots: slots, matched: [], skipped: [], unmatched: [] };
+
+  const matched = [];
+  const skipped = [];
+  const usedContent = new Set();
+
+  const updated = slots.map((slot) => {
+    const isCompound = Boolean(slot.subFields);
+
+    // Only guard: skip if revisedCopy is already non-empty
+    const hasRevised = isCompound
+      ? slot.subFields.some((f) => (slot.revisedCopy?.[f] || "").trim())
+      : (slot.revisedCopy || "").trim();
+    if (hasRevised) {
+      skipped.push(slot.label);
+      return slot;
+    }
+
+    const baseId = slot.id.replace(/-copy-\d+$/, "");
+    let value = null;
+
+    switch (baseId) {
+      case "slot-meta-title":
+        value = parsed.metaTitle || null;
+        break;
+      case "slot-meta-description":
+        value = parsed.metaDescription || null;
+        break;
+      case "slot-hero-headline":
+        value = parsed.h1s?.[0] || null;
+        break;
+      case "slot-hero-subheadline":
+        value = parsed.paragraphs?.[0] || null;
+        break;
+      case "slot-hero-cta":
+        value = parsed.buttons?.[0] || null;
+        break;
+      case "slot-intro-paragraph":
+        value = parsed.paragraphs?.[1] || parsed.paragraphs?.[0] || null;
+        break;
+      case "slot-course-overview":
+        value = parsed.paragraphs?.[1] || parsed.paragraphs?.[0] || null;
+        break;
+      case "slot-target-audience":
+        value = findContentByKeyword(parsed, ["audience", "who", "designed for"]);
+        break;
+      case "slot-instructor-bio":
+        value = findContentByKeyword(parsed, ["instructor", "taught by", "facilitator"]);
+        break;
+      case "slot-mission-statement":
+        value = findContentByKeyword(parsed, ["mission", "purpose", "believe"]);
+        break;
+      case "slot-team-intro":
+        value = findContentByKeyword(parsed, ["team", "people", "leadership"]);
+        break;
+      case "slot-pricing-headline":
+        value = findHeadingByKeyword(parsed, ["pricing", "price", "cost", "invest"]);
+        break;
+      case "slot-pricing-description":
+        value = findContentByKeyword(parsed, ["pricing", "price", "cost", "invest", "per month", "per year"]);
+        break;
+      case "slot-features-headline":
+        value = findHeadingByKeyword(parsed, ["feature", "what you get", "capabilities", "includes"]);
+        break;
+      case "slot-process-headline":
+        value = findHeadingByKeyword(parsed, ["process", "how it works", "how we", "steps", "approach"]);
+        break;
+      case "slot-bottom-cta-headline":
+        value = parsed.h2s?.[parsed.h2s.length - 1] || null;
+        break;
+      case "slot-bottom-cta-subtext":
+        value = parsed.paragraphs?.[parsed.paragraphs.length - 1] || null;
+        break;
+      case "slot-bottom-cta-button":
+        value = parsed.buttons?.[parsed.buttons.length - 1] || parsed.buttons?.[0] || null;
+        break;
+      default:
+        break;
+    }
+
+    // Handle compound slots from sections
+    if (!value && isCompound && parsed.sections?.length > 0) {
+      const compound = mapCompoundSlot(baseId, slot, parsed);
+      if (compound) {
+        matched.push(slot.label);
+        usedContent.add(baseId);
+        return { ...slot, revisedCopy: compound, status: slot.status === "untouched" ? "revised" : slot.status };
+      }
+    }
+
+    // Handle repeatable simple slots
+    if (!value && slot.isRepeatable && !isCompound) {
+      const repeatable = mapRepeatableSlot(baseId, slot, parsed);
+      if (repeatable) value = repeatable;
+    }
+
+    if (value && !isCompound) {
+      matched.push(slot.label);
+      usedContent.add(baseId);
+      return { ...slot, revisedCopy: value, status: slot.status === "untouched" ? "revised" : slot.status };
+    }
+
+    return slot;
+  });
+
+  // Build unmatched list — content from artifact that didn't map to any slot
+  const unmatched = [];
+  if (parsed.h1s?.length) {
+    parsed.h1s.forEach((h) => { if (!usedContent.has("slot-hero-headline")) unmatched.push(`H1: ${h}`); });
+  }
+  if (parsed.h2s?.length) {
+    parsed.h2s.forEach((h, i) => {
+      if (i < parsed.h2s.length - 1 || !usedContent.has("slot-bottom-cta-headline")) {
+        unmatched.push(`H2: ${h}`);
+      }
+    });
+  }
+  if (parsed.paragraphs?.length > 3) {
+    const extraParas = parsed.paragraphs.slice(2, -1);
+    extraParas.forEach((p) => unmatched.push(`Paragraph: ${p.slice(0, 80)}${p.length > 80 ? "..." : ""}`));
+  }
+
+  return { updatedSlots: updated, matched, skipped, unmatched };
 }
 
 function CompoundField({ subFields, value, onChange, disabled, strikethrough }) {
@@ -545,6 +675,10 @@ export default function ContentAudit({ slots, onUpdateSlots, pageUrl }) {
   const [fetchError, setFetchError] = useState(null);
   const [fetched, setFetched] = useState(false);
   const autoFetchDone = useRef(false);
+  const artifactInputRef = useRef(null);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState(null); // { matched, skipped, unmatched }
+  const [showUnmatched, setShowUnmatched] = useState(false);
 
   // Auto-fetch current copy on first mount when all slots are empty
   useEffect(() => {
@@ -583,6 +717,37 @@ export default function ContentAudit({ slots, onUpdateSlots, pageUrl }) {
       setFetching(false);
     }
   }, [pageUrl, slots, onUpdateSlots]);
+
+  const handleArtifactImport = useCallback(async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    // Reset input so same file can be re-selected
+    e.target.value = "";
+
+    setImporting(true);
+    setImportResult(null);
+    try {
+      const html = await file.text();
+      const res = await fetch("/api/parse-artifact", {
+        method: "POST",
+        headers: { "Content-Type": "text/html" },
+        body: html,
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `Failed (${res.status})`);
+      }
+      const parsed = await res.json();
+      const { updatedSlots, matched, skipped, unmatched } = mapArtifactToSlots(parsed, slots);
+      onUpdateSlots(updatedSlots);
+      setImportResult({ matched, skipped, unmatched });
+    } catch (err) {
+      console.error("Artifact import error:", err);
+      setImportResult({ error: err.message });
+    } finally {
+      setImporting(false);
+    }
+  }, [slots, onUpdateSlots]);
 
   const { completed, total, pct, pendingPublish, published } = useMemo(() => {
     const t = slots.length;
@@ -682,6 +847,27 @@ export default function ContentAudit({ slots, onUpdateSlots, pageUrl }) {
                 </span>
               </Tooltip>
             )}
+            <Tooltip title="Import revised copy from an HTML artifact file">
+              <span>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={importing ? <CircularProgress size={14} /> : <UploadFileIcon sx={{ fontSize: 16 }} />}
+                  onClick={() => artifactInputRef.current?.click()}
+                  disabled={importing}
+                  sx={{ fontSize: 11, py: 0.25, textTransform: "none", borderColor: "#1565C0", color: "#1565C0" }}
+                >
+                  {importing ? "Importing..." : "Import Artifact"}
+                </Button>
+              </span>
+            </Tooltip>
+            <input
+              ref={artifactInputRef}
+              type="file"
+              accept=".html,.htm"
+              style={{ display: "none" }}
+              onChange={handleArtifactImport}
+            />
           </Box>
         </Box>
         <LinearProgress
@@ -709,6 +895,58 @@ export default function ContentAudit({ slots, onUpdateSlots, pageUrl }) {
         <Alert severity="success" sx={{ mb: 2, fontSize: 13 }} onClose={() => setFetched(false)}>
           Current copy populated from live page. Review and adjust as needed.
         </Alert>
+      )}
+
+      {/* Artifact import results */}
+      {importResult && !importResult.error && (
+        <Alert
+          severity="info"
+          sx={{ mb: 2, fontSize: 13 }}
+          onClose={() => { setImportResult(null); setShowUnmatched(false); }}
+        >
+          <strong>Artifact imported.</strong>{" "}
+          {importResult.matched.length} slot{importResult.matched.length !== 1 ? "s" : ""} populated
+          {importResult.skipped.length > 0 && (
+            <>, {importResult.skipped.length} skipped (already had revised copy)</>
+          )}
+          .
+          {importResult.unmatched.length > 0 && (
+            <Box sx={{ mt: 1 }}>
+              <Button
+                size="small"
+                onClick={() => setShowUnmatched((p) => !p)}
+                endIcon={<ExpandMoreIcon sx={{ transform: showUnmatched ? "rotate(180deg)" : "none", transition: "0.2s" }} />}
+                sx={{ fontSize: 11, textTransform: "none", p: 0, minWidth: 0, color: "inherit" }}
+              >
+                {importResult.unmatched.length} unmatched content item{importResult.unmatched.length !== 1 ? "s" : ""}
+              </Button>
+              <Collapse in={showUnmatched}>
+                <Box sx={{ mt: 1, pl: 1, fontSize: 12, color: "text.secondary", maxHeight: 200, overflow: "auto" }}>
+                  {importResult.unmatched.map((item, i) => (
+                    <Typography key={i} variant="caption" sx={{ display: "block", mb: 0.5, color: "text.secondary" }}>
+                      {item}
+                    </Typography>
+                  ))}
+                </Box>
+              </Collapse>
+            </Box>
+          )}
+        </Alert>
+      )}
+      {importResult?.error && (
+        <Alert severity="error" sx={{ mb: 2, fontSize: 13 }} onClose={() => setImportResult(null)}>
+          Artifact import failed: {importResult.error}
+        </Alert>
+      )}
+
+      {/* Importing overlay */}
+      {importing && (
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 2, p: 1.5, bgcolor: "#E3F2FD", borderRadius: 2 }}>
+          <CircularProgress size={18} sx={{ color: "#1565C0" }} />
+          <Typography variant="body2" sx={{ color: "#1565C0", fontWeight: 500 }}>
+            Parsing artifact and mapping to slots...
+          </Typography>
+        </Box>
       )}
 
       {/* Loading overlay */}
