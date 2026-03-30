@@ -52,6 +52,7 @@ import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/Delete";
 import PlaylistAddCheckIcon from "@mui/icons-material/PlaylistAddCheck";
 import VisibilityIcon from "@mui/icons-material/Visibility";
+import RestoreIcon from "@mui/icons-material/Restore";
 
 import { STATUSES, STATUS_KEYS } from "./data/statuses";
 import { SITE_SECTIONS } from "./data/siteSections";
@@ -1254,6 +1255,9 @@ export default function App() {
       });
       if (res.ok) {
         setSaveStatus("saved");
+      } else if (res.status === 409) {
+        console.error("Save blocked: data loss prevention triggered");
+        setSaveStatus("error");
       } else {
         setSaveStatus("error");
       }
@@ -1475,6 +1479,33 @@ export default function App() {
     e.target.value = "";
   };
 
+  const handleRestoreAutoBackup = useCallback(async () => {
+    if (!window.confirm("Restore from the last auto-backup? This will replace all current data with the previously saved version.")) return;
+    try {
+      setSaveStatus("saving");
+      const res = await fetch("/api/backup?action=restore-auto", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || "Restore failed");
+        setSaveStatus("error");
+        return;
+      }
+      // Reload state from KV
+      skipNextSave.current = true;
+      const fresh = await fetch("/api/state");
+      const freshData = await fresh.json();
+      if (freshData.pageStates) setPageStates(freshData.pageStates);
+      if (freshData.sectionOrder) setSectionOrder(freshData.sectionOrder);
+      if (freshData.pageOrder) setPageOrder(freshData.pageOrder);
+      if (freshData.sectionMeta) setSectionMeta(freshData.sectionMeta);
+      if (freshData.customSections) setCustomSections(freshData.customSections);
+      setSaveStatus("saved");
+    } catch (err) {
+      console.error("Auto-restore failed:", err);
+      setSaveStatus("error");
+    }
+  }, []);
+
   // --- Compute active sections and pages (merge custom pages into section objects) ---
   const tabKey = ["site", "outreach", "annotations"][tab] || "site";
   const orderedSections = useMemo(() => {
@@ -1659,6 +1690,15 @@ export default function App() {
                 sx={{ fontSize: 11, py: 0, px: 0.75, minWidth: 0, color: "text.secondary", textTransform: "none" }}
               >
                 Restore
+              </Button>
+              <Button
+                variant="text"
+                size="small"
+                startIcon={<RestoreIcon />}
+                onClick={handleRestoreAutoBackup}
+                sx={{ fontSize: 11, py: 0, px: 0.75, minWidth: 0, color: "#6A1B9A", textTransform: "none" }}
+              >
+                Undo Last Save
               </Button>
             </Box>
             <input
