@@ -706,6 +706,8 @@ export default function ContentAudit({ slots, onUpdateSlots, pageUrl }) {
   const [importResult, setImportResult] = useState(null); // { matched, skipped, unmatched }
   const [showUnmatched, setShowUnmatched] = useState(false);
   const [confirmReplace, setConfirmReplace] = useState(null); // null or { scraped, elementCount }
+  const [slotFilter, setSlotFilter] = useState("all"); // "all" | "revised" | "unchanged"
+  const [collapsedSections, setCollapsedSections] = useState(new Set());
 
   // Auto-fetch current copy on first mount when all slots are empty
   useEffect(() => {
@@ -847,6 +849,37 @@ export default function ContentAudit({ slots, onUpdateSlots, pageUrl }) {
     const pub = slots.filter((s) => s.status === "published").length;
     return { completed: c, total: t, pct: t > 0 ? Math.round((c / t) * 100) : 0, pendingPublish: pp, published: pub };
   }, [slots]);
+
+  const { groupedSlots, sectionNames } = useMemo(() => {
+    let filtered = slots;
+    if (slotFilter === "revised") {
+      filtered = slots.filter((s) => (s.revisedCopy || "").trim());
+    } else if (slotFilter === "unchanged") {
+      filtered = slots.filter((s) => !(s.revisedCopy || "").trim());
+    }
+
+    const groups = new Map();
+    const names = [];
+    for (const slot of filtered) {
+      const section = slot.section || "other";
+      if (!groups.has(section)) {
+        groups.set(section, []);
+        names.push(section);
+      }
+      groups.get(section).push(slot);
+    }
+
+    return { groupedSlots: groups, sectionNames: names };
+  }, [slots, slotFilter]);
+
+  const toggleSection = useCallback((section) => {
+    setCollapsedSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(section)) next.delete(section);
+      else next.add(section);
+      return next;
+    });
+  }, []);
 
   const updateSlot = useCallback(
     (idx, updated) => {
@@ -994,11 +1027,13 @@ export default function ContentAudit({ slots, onUpdateSlots, pageUrl }) {
           onClose={() => { setImportResult(null); setShowUnmatched(false); }}
         >
           <strong>Artifact imported.</strong>{" "}
-          {importResult.matched.length} slot{importResult.matched.length !== 1 ? "s" : ""} populated
+          {importResult.totalArtifact
+            ? `Matched ${importResult.matched.length} of ${importResult.totalArtifact} artifact elements to current page slots.`
+            : `${importResult.matched.length} slot${importResult.matched.length !== 1 ? "s" : ""} populated.`
+          }
           {importResult.skipped.length > 0 && (
-            <>, {importResult.skipped.length} skipped (already had revised copy)</>
+            <> {importResult.skipped.length} skipped (already had revised copy).</>
           )}
-          .
           {importResult.unmatched.length > 0 && (
             <Box sx={{ mt: 1 }}>
               <Button
@@ -1007,13 +1042,13 @@ export default function ContentAudit({ slots, onUpdateSlots, pageUrl }) {
                 endIcon={<ExpandMoreIcon sx={{ transform: showUnmatched ? "rotate(180deg)" : "none", transition: "0.2s" }} />}
                 sx={{ fontSize: 11, textTransform: "none", p: 0, minWidth: 0, color: "inherit" }}
               >
-                {importResult.unmatched.length} unmatched content item{importResult.unmatched.length !== 1 ? "s" : ""}
+                {importResult.unmatched.length} new content item{importResult.unmatched.length !== 1 ? "s" : ""} not on current page
               </Button>
               <Collapse in={showUnmatched}>
                 <Box sx={{ mt: 1, pl: 1, fontSize: 12, color: "text.secondary", maxHeight: 200, overflow: "auto" }}>
                   {importResult.unmatched.map((item, i) => (
                     <Typography key={i} variant="caption" sx={{ display: "block", mb: 0.5, color: "text.secondary" }}>
-                      {item}
+                      {typeof item === "string" ? item : `${item}`}
                     </Typography>
                   ))}
                 </Box>
@@ -1048,6 +1083,29 @@ export default function ContentAudit({ slots, onUpdateSlots, pageUrl }) {
         </Box>
       )}
 
+      {/* Filter toggles — only show when we have generated slots */}
+      {slots.some((s) => s.isGenerated) && (
+        <Box sx={{ display: "flex", gap: 1, mb: 2 }}>
+          {["all", "revised", "unchanged"].map((f) => (
+            <Chip
+              key={f}
+              label={f === "all" ? `All (${slots.length})` : f === "revised" ? `Revised (${slots.filter(s => (s.revisedCopy || "").trim()).length})` : `Unchanged (${slots.filter(s => !(s.revisedCopy || "").trim()).length})`}
+              size="small"
+              variant={slotFilter === f ? "filled" : "outlined"}
+              onClick={() => setSlotFilter(f)}
+              sx={{
+                cursor: "pointer",
+                fontSize: 12,
+                fontWeight: slotFilter === f ? 700 : 400,
+                bgcolor: slotFilter === f ? "#3498DC" : undefined,
+                color: slotFilter === f ? "#fff" : undefined,
+                "&:hover": { bgcolor: slotFilter === f ? "#2980B9" : "#F5F5F5" },
+              }}
+            />
+          ))}
+        </Box>
+      )}
+
       {/* Legend */}
       <Box sx={{ display: "flex", gap: 2, mb: 2, flexWrap: "wrap" }}>
         {Object.entries(STATUS_CONFIG).map(([key, cfg]) => (
@@ -1062,18 +1120,89 @@ export default function ContentAudit({ slots, onUpdateSlots, pageUrl }) {
 
       <Divider sx={{ mb: 2 }} />
 
-      {/* Slot rows */}
-      {slots.map((slot, idx) => (
-        <SlotRow
-          key={slot.id}
-          slot={slot}
-          index={idx}
-          onUpdate={updateSlot}
-          onDuplicate={handleDuplicate}
-          onDelete={handleDelete}
-          totalSlots={slots.length}
-        />
-      ))}
+      {/* Slot rows — grouped by section if generated */}
+      {slots.some((s) => s.isGenerated) ? (
+        sectionNames.map((section) => {
+          const sectionSlots = groupedSlots.get(section) || [];
+          const isCollapsed = collapsedSections.has(section);
+          const sectionCompleted = sectionSlots.filter((s) =>
+            s.status === "approved" || s.status === "revised" || s.status === "revised_approved" || s.status === "published"
+          ).length;
+          const sectionLabel = section.charAt(0).toUpperCase() + section.slice(1).replace(/-/g, " ");
+          const allNavLinks = sectionSlots.every((s) => s.isNavLink);
+
+          return (
+            <Box key={section} sx={{ mb: 2 }}>
+              <Box
+                onClick={() => toggleSection(section)}
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 1,
+                  py: 1,
+                  px: 1.5,
+                  bgcolor: "#F5F5F5",
+                  borderRadius: 2,
+                  cursor: "pointer",
+                  userSelect: "none",
+                  "&:hover": { bgcolor: "#EEEEEE" },
+                  mb: isCollapsed ? 0 : 1,
+                }}
+              >
+                <ExpandMoreIcon
+                  sx={{
+                    fontSize: 20,
+                    color: "text.secondary",
+                    transform: isCollapsed ? "rotate(-90deg)" : "rotate(0deg)",
+                    transition: "transform 0.2s",
+                  }}
+                />
+                <Typography variant="subtitle2" sx={{ fontWeight: 700, fontSize: 13, flex: 1 }}>
+                  {sectionLabel}
+                  {allNavLinks && " (Nav/Footer Links)"}
+                </Typography>
+                <Chip
+                  label={`${sectionCompleted}/${sectionSlots.length}`}
+                  size="small"
+                  sx={{
+                    fontSize: 11,
+                    height: 20,
+                    bgcolor: sectionCompleted === sectionSlots.length && sectionSlots.length > 0 ? "#E8F5E9" : "#E0E0E0",
+                  }}
+                />
+              </Box>
+              <Collapse in={!isCollapsed}>
+                {sectionSlots.map((slot) => {
+                  const realIdx = slots.findIndex((s) => s.id === slot.id);
+                  return (
+                    <SlotRow
+                      key={slot.id}
+                      slot={slot}
+                      index={realIdx}
+                      onUpdate={updateSlot}
+                      onDuplicate={handleDuplicate}
+                      onDelete={handleDelete}
+                      totalSlots={slots.length}
+                    />
+                  );
+                })}
+              </Collapse>
+            </Box>
+          );
+        })
+      ) : (
+        slots.map((slot, idx) => (
+          <SlotRow
+            key={slot.id}
+            slot={slot}
+            index={idx}
+            onUpdate={updateSlot}
+            onDuplicate={handleDuplicate}
+            onDelete={handleDelete}
+            totalSlots={slots.length}
+          />
+        ))
+      )}
 
       {/* Add Custom Slot */}
       <Box sx={{ mt: 2 }}>
@@ -1109,6 +1238,24 @@ export default function ContentAudit({ slots, onUpdateSlots, pageUrl }) {
           />
         )}
       </Box>
+
+      {/* Migration confirmation dialog */}
+      {confirmReplace && (
+        <Dialog open onClose={() => { setConfirmReplace(null); setFetching(false); }}>
+          <DialogTitle>Replace Content Slots?</DialogTitle>
+          <DialogContent>
+            <DialogContentText sx={{ fontSize: 14 }}>
+              This will replace your current {slots.length} slots with a full page inventory
+              (~{confirmReplace.elementCount} slots). Any revised copy in existing slots will be
+              preserved where possible by matching against the new slots.
+            </DialogContentText>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => { setConfirmReplace(null); setFetching(false); }}>Cancel</Button>
+            <Button onClick={handleConfirmReplace} variant="contained">Replace Slots</Button>
+          </DialogActions>
+        </Dialog>
+      )}
     </Box>
   );
 }
