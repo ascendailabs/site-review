@@ -34,6 +34,154 @@ const STATUS_CONFIG = {
   published: { label: "Published", color: "#00695C", bgColor: "#E0F2F1" },
 };
 
+function similarity(a, b) {
+  if (!a || !b) return 0;
+  const la = a.toLowerCase().trim();
+  const lb = b.toLowerCase().trim();
+  if (la === lb) return 1;
+  if (la.includes(lb) || lb.includes(la)) return 0.8;
+
+  const wordsA = la.split(/\s+/);
+  const wordsB = lb.split(/\s+/);
+  const n = Math.min(5, Math.min(wordsA.length, wordsB.length));
+  if (n >= 2) {
+    const prefixA = wordsA.slice(0, n).join(" ");
+    const prefixB = wordsB.slice(0, n).join(" ");
+    if (prefixA === prefixB) return 0.7;
+  }
+
+  const setA = new Set(wordsA);
+  const setB = new Set(wordsB);
+  const intersection = new Set([...setA].filter(w => setB.has(w)));
+  const union = new Set([...setA, ...setB]);
+  return union.size > 0 ? intersection.size / union.size : 0;
+}
+
+function generateLabel(el, sectionTagCounts) {
+  const sectionName = el.section.charAt(0).toUpperCase() + el.section.slice(1).replace(/-/g, " ");
+  const tagLabels = {
+    h1: "Heading", h2: "Heading", h3: "Heading", h4: "Heading", h5: "Heading", h6: "Heading",
+    p: "Paragraph", a: "Link", button: "Button", li: "List Item",
+    blockquote: "Quote", figcaption: "Caption", dt: "Term", dd: "Definition",
+  };
+  const typeLabel = tagLabels[el.tag] || "Text";
+  const key = `${el.section}-${typeLabel}`;
+  sectionTagCounts[key].seen++;
+  const count = sectionTagCounts[key].seen;
+  const total = sectionTagCounts[key].total;
+  if (total > 1) return `${sectionName} — ${typeLabel} ${count}`;
+  return `${sectionName} — ${typeLabel}`;
+}
+
+function generateSlotsFromElements(elements, metaTitle, metaDescription) {
+  const slots = [];
+
+  if (metaTitle) {
+    slots.push({
+      id: "meta-title", label: "Meta Title", currentCopy: metaTitle,
+      revisedCopy: "", status: "untouched", tag: "title", section: "meta", isGenerated: true,
+    });
+  }
+  if (metaDescription) {
+    slots.push({
+      id: "meta-description", label: "Meta Description", currentCopy: metaDescription,
+      revisedCopy: "", status: "untouched", tag: "meta", section: "meta", isGenerated: true,
+    });
+  }
+
+  // Pre-count section+type totals for numbering
+  const sectionTagCounts = {};
+  for (const el of elements) {
+    const tagLabels = {
+      h1: "Heading", h2: "Heading", h3: "Heading", h4: "Heading", h5: "Heading", h6: "Heading",
+      p: "Paragraph", a: "Link", button: "Button", li: "List Item",
+      blockquote: "Quote", figcaption: "Caption", dt: "Term", dd: "Definition",
+    };
+    const typeLabel = tagLabels[el.tag] || "Text";
+    const key = `${el.section}-${typeLabel}`;
+    if (!sectionTagCounts[key]) sectionTagCounts[key] = { total: 0, seen: 0 };
+    sectionTagCounts[key].total++;
+  }
+
+  for (const el of elements) {
+    const isNavLink = (el.section === "nav" || el.section === "footer") &&
+                      el.tag === "a" && el.text.split(/\s+/).length <= 2;
+    slots.push({
+      id: el.id, label: generateLabel(el, sectionTagCounts), currentCopy: el.text,
+      revisedCopy: "", status: "untouched", tag: el.tag, section: el.section,
+      isGenerated: true, isNavLink, duplicateCount: el.duplicateCount || null,
+    });
+  }
+
+  return slots;
+}
+
+function matchArtifactToSlots(artifactElements, artifactMeta, currentSlots) {
+  if (!artifactElements?.length) {
+    return { updatedSlots: currentSlots, matched: [], skipped: [], unmatched: [] };
+  }
+
+  const matched = [];
+  const skipped = [];
+  const unmatched = [];
+  const usedSlotIds = new Set();
+
+  const artifactItems = [];
+  if (artifactMeta?.metaTitle) {
+    artifactItems.push({ id: "art-meta-title", tag: "title", section: "meta", text: artifactMeta.metaTitle, context: "meta title" });
+  }
+  if (artifactMeta?.metaDescription) {
+    artifactItems.push({ id: "art-meta-desc", tag: "meta", section: "meta", text: artifactMeta.metaDescription, context: "meta description" });
+  }
+  for (const el of artifactElements) artifactItems.push(el);
+
+  for (const artEl of artifactItems) {
+    let bestMatch = null;
+    let bestScore = 0;
+
+    for (const slot of currentSlots) {
+      if (usedSlotIds.has(slot.id)) continue;
+      if ((slot.revisedCopy || "").trim()) continue;
+
+      let score = similarity(artEl.text, slot.currentCopy);
+      if (artEl.section && slot.section && artEl.section === slot.section) score += 0.2;
+      if (artEl.tag && slot.tag && artEl.tag === slot.tag) score += 0.1;
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestMatch = slot;
+      }
+    }
+
+    if (bestMatch && bestScore > 0.3) {
+      matched.push({ slotId: bestMatch.id, slotLabel: bestMatch.label, artifactText: artEl.text, score: bestScore });
+      usedSlotIds.add(bestMatch.id);
+    } else {
+      unmatched.push(artEl);
+    }
+  }
+
+  for (const slot of currentSlots) {
+    if ((slot.revisedCopy || "").trim() && !usedSlotIds.has(slot.id)) {
+      skipped.push({ id: slot.id, label: slot.label });
+    }
+  }
+
+  const updatedSlots = currentSlots.map((slot) => {
+    const match = matched.find((m) => m.slotId === slot.id);
+    if (!match) return slot;
+    if (similarity(match.artifactText, slot.currentCopy) >= 0.95) return slot;
+    return { ...slot, revisedCopy: match.artifactText, status: slot.status === "untouched" ? "revised" : slot.status };
+  });
+
+  const actuallyRevised = matched.filter((m) => {
+    const slot = updatedSlots.find((s) => s.id === m.slotId);
+    return slot && (slot.revisedCopy || "").trim();
+  });
+
+  return { updatedSlots, matched: actuallyRevised, skipped, unmatched };
+}
+
 // --- Map scraped page content to slot currentCopy values ---
 function mapScrapedToSlots(scraped, slots) {
   if (!scraped) return slots;
@@ -222,133 +370,6 @@ function mapRepeatableSlot(baseId, slot, scraped) {
     return findContentByKeyword(scraped, ["learn", "outcome", "by the end", "able to"]);
   }
   return null;
-}
-
-// --- Map parsed artifact content to slot revisedCopy values ---
-function mapArtifactToSlots(parsed, slots) {
-  if (!parsed) return { updatedSlots: slots, matched: [], skipped: [], unmatched: [] };
-
-  const matched = [];
-  const skipped = [];
-  const usedContent = new Set();
-
-  const updated = slots.map((slot) => {
-    const isCompound = Boolean(slot.subFields);
-
-    // Only guard: skip if revisedCopy is already non-empty
-    const hasRevised = isCompound
-      ? slot.subFields.some((f) => (slot.revisedCopy?.[f] || "").trim())
-      : (slot.revisedCopy || "").trim();
-    if (hasRevised) {
-      skipped.push(slot.label);
-      return slot;
-    }
-
-    const baseId = slot.id.replace(/-copy-\d+$/, "");
-    let value = null;
-
-    switch (baseId) {
-      case "slot-meta-title":
-        value = parsed.metaTitle || null;
-        break;
-      case "slot-meta-description":
-        value = parsed.metaDescription || null;
-        break;
-      case "slot-hero-headline":
-        value = parsed.h1s?.[0] || null;
-        break;
-      case "slot-hero-subheadline":
-        value = parsed.paragraphs?.[0] || null;
-        break;
-      case "slot-hero-cta":
-        value = parsed.buttons?.[0] || null;
-        break;
-      case "slot-intro-paragraph":
-        value = parsed.paragraphs?.[1] || parsed.paragraphs?.[0] || null;
-        break;
-      case "slot-course-overview":
-        value = parsed.paragraphs?.[1] || parsed.paragraphs?.[0] || null;
-        break;
-      case "slot-target-audience":
-        value = findContentByKeyword(parsed, ["audience", "who", "designed for"]);
-        break;
-      case "slot-instructor-bio":
-        value = findContentByKeyword(parsed, ["instructor", "taught by", "facilitator"]);
-        break;
-      case "slot-mission-statement":
-        value = findContentByKeyword(parsed, ["mission", "purpose", "believe"]);
-        break;
-      case "slot-team-intro":
-        value = findContentByKeyword(parsed, ["team", "people", "leadership"]);
-        break;
-      case "slot-pricing-headline":
-        value = findHeadingByKeyword(parsed, ["pricing", "price", "cost", "invest"]);
-        break;
-      case "slot-pricing-description":
-        value = findContentByKeyword(parsed, ["pricing", "price", "cost", "invest", "per month", "per year"]);
-        break;
-      case "slot-features-headline":
-        value = findHeadingByKeyword(parsed, ["feature", "what you get", "capabilities", "includes"]);
-        break;
-      case "slot-process-headline":
-        value = findHeadingByKeyword(parsed, ["process", "how it works", "how we", "steps", "approach"]);
-        break;
-      case "slot-bottom-cta-headline":
-        value = parsed.h2s?.[parsed.h2s.length - 1] || null;
-        break;
-      case "slot-bottom-cta-subtext":
-        value = parsed.paragraphs?.[parsed.paragraphs.length - 1] || null;
-        break;
-      case "slot-bottom-cta-button":
-        value = parsed.buttons?.[parsed.buttons.length - 1] || parsed.buttons?.[0] || null;
-        break;
-      default:
-        break;
-    }
-
-    // Handle compound slots from sections
-    if (!value && isCompound && parsed.sections?.length > 0) {
-      const compound = mapCompoundSlot(baseId, slot, parsed);
-      if (compound) {
-        matched.push(slot.label);
-        usedContent.add(baseId);
-        return { ...slot, revisedCopy: compound, status: slot.status === "untouched" ? "revised" : slot.status };
-      }
-    }
-
-    // Handle repeatable simple slots
-    if (!value && slot.isRepeatable && !isCompound) {
-      const repeatable = mapRepeatableSlot(baseId, slot, parsed);
-      if (repeatable) value = repeatable;
-    }
-
-    if (value && !isCompound) {
-      matched.push(slot.label);
-      usedContent.add(baseId);
-      return { ...slot, revisedCopy: value, status: slot.status === "untouched" ? "revised" : slot.status };
-    }
-
-    return slot;
-  });
-
-  // Build unmatched list — content from artifact that didn't map to any slot
-  const unmatched = [];
-  if (parsed.h1s?.length) {
-    parsed.h1s.forEach((h) => { if (!usedContent.has("slot-hero-headline")) unmatched.push(`H1: ${h}`); });
-  }
-  if (parsed.h2s?.length) {
-    parsed.h2s.forEach((h, i) => {
-      if (i < parsed.h2s.length - 1 || !usedContent.has("slot-bottom-cta-headline")) {
-        unmatched.push(`H2: ${h}`);
-      }
-    });
-  }
-  if (parsed.paragraphs?.length > 3) {
-    const extraParas = parsed.paragraphs.slice(2, -1);
-    extraParas.forEach((p) => unmatched.push(`Paragraph: ${p.slice(0, 80)}${p.length > 80 ? "..." : ""}`));
-  }
-
-  return { updatedSlots: updated, matched, skipped, unmatched };
 }
 
 function CompoundField({ subFields, value, onChange, disabled, strikethrough }) {
