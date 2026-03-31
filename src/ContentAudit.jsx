@@ -12,6 +12,11 @@ import {
   CircularProgress,
   Alert,
   Collapse,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  DialogContentText,
 } from "@mui/material";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import EditIcon from "@mui/icons-material/Edit";
@@ -700,6 +705,7 @@ export default function ContentAudit({ slots, onUpdateSlots, pageUrl }) {
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState(null); // { matched, skipped, unmatched }
   const [showUnmatched, setShowUnmatched] = useState(false);
+  const [confirmReplace, setConfirmReplace] = useState(null); // null or { scraped, elementCount }
 
   // Auto-fetch current copy on first mount when all slots are empty
   useEffect(() => {
@@ -717,6 +723,40 @@ export default function ContentAudit({ slots, onUpdateSlots, pageUrl }) {
     fetchCurrentCopy();
   }, [pageUrl, slots]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const applyDynamicSlots = useCallback((scraped) => {
+    const newSlots = generateSlotsFromElements(scraped.elements, scraped.metaTitle, scraped.metaDescription);
+
+    // Carry over revisedCopy from old slots via text matching
+    const oldSlotsWithRevised = slots.filter((s) => (s.revisedCopy || "").trim());
+    for (const oldSlot of oldSlotsWithRevised) {
+      let bestMatch = null;
+      let bestScore = 0;
+      for (const newSlot of newSlots) {
+        if ((newSlot.revisedCopy || "").trim()) continue;
+        const score = similarity(oldSlot.currentCopy || "", newSlot.currentCopy || "");
+        if (score > bestScore) {
+          bestScore = score;
+          bestMatch = newSlot;
+        }
+      }
+      if (bestMatch && bestScore > 0.5) {
+        bestMatch.revisedCopy = oldSlot.revisedCopy;
+        bestMatch.status = oldSlot.status;
+      }
+    }
+
+    // Preserve custom slots
+    const customSlots = slots.filter((s) => s.isCustom);
+    onUpdateSlots([...newSlots, ...customSlots]);
+  }, [slots, onUpdateSlots]);
+
+  const handleConfirmReplace = useCallback(() => {
+    if (!confirmReplace) return;
+    applyDynamicSlots(confirmReplace.scraped);
+    setConfirmReplace(null);
+    setFetched(true);
+  }, [confirmReplace, applyDynamicSlots]);
+
   const fetchCurrentCopy = useCallback(async () => {
     if (!pageUrl) return;
     setFetching(true);
@@ -728,8 +768,21 @@ export default function ContentAudit({ slots, onUpdateSlots, pageUrl }) {
         throw new Error(data.error || `Failed (${res.status})`);
       }
       const scraped = await res.json();
-      const mapped = mapScrapedToSlots(scraped, slots);
-      onUpdateSlots(mapped);
+
+      if (scraped.elements?.length > 0) {
+        // Dynamic slot generation path
+        const hasExistingWork = slots.some((s) => s.status !== "untouched" || (s.revisedCopy || "").trim());
+        if (hasExistingWork && !slots[0]?.isGenerated) {
+          // Old template-based slots with work — confirm before replacing
+          setConfirmReplace({ scraped, elementCount: scraped.elements.length });
+          return;
+        }
+        applyDynamicSlots(scraped);
+      } else {
+        // Fallback to old mapping for backward compat
+        const mapped = mapScrapedToSlots(scraped, slots);
+        onUpdateSlots(mapped);
+      }
       setFetched(true);
     } catch (err) {
       console.error("Fetch current copy error:", err);
@@ -737,12 +790,11 @@ export default function ContentAudit({ slots, onUpdateSlots, pageUrl }) {
     } finally {
       setFetching(false);
     }
-  }, [pageUrl, slots, onUpdateSlots]);
+  }, [pageUrl, slots, onUpdateSlots, applyDynamicSlots]);
 
   const handleArtifactImport = useCallback(async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    // Reset input so same file can be re-selected
     e.target.value = "";
 
     setImporting(true);
@@ -759,9 +811,25 @@ export default function ContentAudit({ slots, onUpdateSlots, pageUrl }) {
         throw new Error(data.error || `Failed (${res.status})`);
       }
       const parsed = await res.json();
-      const { updatedSlots, matched, skipped, unmatched } = mapArtifactToSlots(parsed, slots);
-      onUpdateSlots(updatedSlots);
-      setImportResult({ matched, skipped, unmatched });
+
+      if (parsed.elements?.length > 0) {
+        const { updatedSlots, matched, skipped, unmatched } = matchArtifactToSlots(
+          parsed.elements,
+          { metaTitle: parsed.metaTitle, metaDescription: parsed.metaDescription },
+          slots
+        );
+        onUpdateSlots(updatedSlots);
+        setImportResult({
+          matched: matched.map((m) => m.slotLabel),
+          skipped: skipped.map((s) => s.label),
+          unmatched: unmatched.map((u) => `${u.context}: ${u.text.slice(0, 80)}${u.text.length > 80 ? "..." : ""}`),
+          totalArtifact: parsed.elements.length + (parsed.metaTitle ? 1 : 0) + (parsed.metaDescription ? 1 : 0),
+          totalSlots: slots.length,
+        });
+      } else {
+        // Legacy fallback with old-style parsed data - just show warning
+        setImportResult({ error: "Artifact parsing returned no elements. Try re-saving the artifact as clean HTML." });
+      }
     } catch (err) {
       console.error("Artifact import error:", err);
       setImportResult({ error: err.message });
