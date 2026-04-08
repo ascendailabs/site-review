@@ -46,6 +46,7 @@ import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import CloudUpload from "@mui/icons-material/CloudUpload";
 import CloudDownload from "@mui/icons-material/CloudDownload";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
+import CheckCircleOutlineIcon from "@mui/icons-material/CheckCircleOutline";
 import SyncIcon from "@mui/icons-material/Sync";
 import ErrorIcon from "@mui/icons-material/Error";
 import NotesIcon from "@mui/icons-material/Notes";
@@ -63,6 +64,7 @@ import RestoreIcon from "@mui/icons-material/Restore";
 import { STATUSES, STATUS_KEYS } from "./data/statuses";
 import { SITE_SECTIONS } from "./data/siteSections";
 import { OUTREACH_SECTIONS } from "./data/outreachSections";
+import { QUALITY_CHECKLIST_ITEMS, countChecked } from "./data/qualityChecklist";
 import AnnotationsPanel from "./AnnotationsPanel";
 import PageDetailView from "./PageDetailView";
 
@@ -371,6 +373,9 @@ function PageCard({ page, pageState, onUpdate, onMoveUp, onMoveDown, isFirst, is
   const borderColor = finished ? "#2E7D32" : (PRIORITIES[priority]?.color || "#9E9E9E");
   const todos = pageState?.todos || [];
   const filteredTodos = todoFilter === "all" ? todos : todos.filter((t) => t.category === todoFilter);
+  const qaChecked = countChecked(pageState?.qualityChecklist);
+  const qaTotal = QUALITY_CHECKLIST_ITEMS.length;
+  const qaComplete = qaChecked === qaTotal;
 
   const addReviewer = () => {
     if (!reviewerName.trim()) return;
@@ -518,6 +523,27 @@ function PageCard({ page, pageState, onUpdate, onMoveUp, onMoveDown, isFirst, is
           >
             {page.name}
           </Typography>
+          <Tooltip title={qaComplete ? "QA complete" : `QA: ${qaChecked}/${qaTotal}`} arrow>
+            <Box
+              component="span"
+              onClick={onDetail}
+              role={onDetail ? "button" : undefined}
+              aria-label={qaComplete ? "QA complete" : `QA ${qaChecked} of ${qaTotal}`}
+              sx={{
+                display: "inline-flex",
+                alignItems: "center",
+                cursor: onDetail ? "pointer" : "default",
+                color: qaComplete ? "success.main" : "text.disabled",
+                lineHeight: 0,
+              }}
+            >
+              {qaComplete ? (
+                <CheckCircleIcon sx={{ fontSize: 18 }} />
+              ) : (
+                <CheckCircleOutlineIcon sx={{ fontSize: 18 }} />
+              )}
+            </Box>
+          </Tooltip>
           <Chip
             label={page.url.replace("https://ascendlabs.ai", "")}
             size="small"
