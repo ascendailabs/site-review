@@ -22,6 +22,12 @@ import {
   Popover,
   Checkbox,
   Divider,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogContentText,
+  DialogActions,
+  Alert,
 } from "@mui/material";
 import BoltIcon from "@mui/icons-material/Bolt";
 import MemoryIcon from "@mui/icons-material/Memory";
@@ -1195,6 +1201,9 @@ export default function App() {
   const [showThumbnails, setShowThumbnails] = useState(false);
   const [saveStatus, setSaveStatus] = useState("idle"); // idle | saving | saved | error
   const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState(null); // { message, detail, hasMirror } | null — blocks editing when set
+  const [viewingMirror, setViewingMirror] = useState(false); // true when user opted to view localStorage backup; saves stay blocked, dialog hidden
+  const [saveBlockError, setSaveBlockError] = useState(null); // { existingScore, newScore } | null — 30% data-loss guard 409
   const [addingSection, setAddingSection] = useState(false);
   const [newSectionName, setNewSectionName] = useState("");
   const [newSectionIcon, setNewSectionIcon] = useState("Bolt");
@@ -1214,35 +1223,105 @@ export default function App() {
   const skipNextSave = useRef(false);
   const fileInputRef = useRef(null);
 
+  // Write a snapshot of state to localStorage as a read-only fallback for the
+  // case where KV is unreachable on a future load. Wrapped to handle quota errors.
+  const mirrorToLocalStorage = useCallback((snapshot) => {
+    try {
+      // Strip nothing — if this throws QuotaExceededError, we log once and move on.
+      // The mirror is a best-effort backup, not a hard requirement.
+      localStorage.setItem(
+        "review-state-mirror",
+        JSON.stringify({ ...snapshot, mirroredAt: new Date().toISOString() })
+      );
+    } catch (err) {
+      console.warn("localStorage mirror failed (quota or disabled):", err?.message || err);
+    }
+  }, []);
+
+  // Helper: apply a loaded state object to all the local state setters.
+  // Always sets skipNextSave so the immediate echo from setState doesn't trigger a save-back.
+  const applyLoadedState = useCallback((data) => {
+    skipNextSave.current = true;
+    setPageStates(data.pageStates || {});
+    setSectionOrder(data.sectionOrder || { site: [], outreach: [] });
+    setPageOrder(data.pageOrder || {});
+    setSectionMeta(data.sectionMeta || {});
+    setCustomSections(data.customSections || { site: [], outreach: [] });
+  }, []);
+
   // --- Load state from KV on mount ---
+  // SAFETY: If anything goes wrong loading (network, non-OK status, malformed body),
+  // we set loadError and REFUSE to set `loaded = true`. The auto-save effect is gated
+  // on `loaded`, so a failed load can never overwrite KV with the empty initial state.
+  // This is the fix for the previous data-loss incident.
   useEffect(() => {
+    function failWith(message, detail) {
+      const hasMirror = (() => {
+        try {
+          return !!localStorage.getItem("review-state-mirror");
+        } catch {
+          return false;
+        }
+      })();
+      setLoadError({ message, detail, hasMirror });
+    }
+
     async function load() {
+      let res;
       try {
-        const res = await fetch("/api/state");
-        const data = await res.json();
-        if (data.pageStates) {
-          setPageStates(data.pageStates);
-        }
-        if (data.sectionOrder) {
-          setSectionOrder(data.sectionOrder);
-        }
-        if (data.pageOrder) {
-          setPageOrder(data.pageOrder);
-        }
-        if (data.sectionMeta) {
-          setSectionMeta(data.sectionMeta);
-        }
-        if (data.customSections) {
-          setCustomSections(data.customSections);
-        }
-        skipNextSave.current = true;
+        res = await fetch("/api/state");
       } catch (err) {
-        console.error("Failed to load state:", err);
+        console.error("Load failed (network):", err);
+        failWith(
+          "Could not reach the server to load your review data.",
+          String(err?.message || err)
+        );
+        return;
       }
+
+      if (!res.ok) {
+        console.error("Load failed (HTTP):", res.status);
+        failWith(
+          `Server returned ${res.status} when loading your review data.`,
+          "Editing is disabled until this resolves to prevent overwriting existing data."
+        );
+        return;
+      }
+
+      let data;
+      try {
+        data = await res.json();
+      } catch (err) {
+        console.error("Load failed (bad JSON):", err);
+        failWith(
+          "The server returned an invalid response when loading review data.",
+          "This usually means API routes aren't running locally. Use `vercel dev` instead of `npm run dev` for full-stack dev."
+        );
+        return;
+      }
+
+      // Empty KV ({ pageStates: null, ... }) is a valid first-run state — no error.
+      applyLoadedState(data);
+
+      // Only mirror if we actually have data (avoid writing an empty-shell mirror on first run).
+      if (data.pageStates && Object.keys(data.pageStates).length > 0) {
+        mirrorToLocalStorage({
+          pageStates: data.pageStates,
+          sectionOrder: data.sectionOrder,
+          pageOrder: data.pageOrder,
+          sectionMeta: data.sectionMeta,
+          customSections: data.customSections,
+        });
+      }
+
       setLoaded(true);
     }
     load();
-  }, []);
+    // applyLoadedState and mirrorToLocalStorage are stable (empty-dep useCallbacks),
+    // so this effect runs exactly once on mount. Listed in deps to satisfy exhaustive-deps,
+    // but if either ever gains state-dependent deps this becomes a re-load footgun —
+    // applyLoadedState's internal skipNextSave guard mitigates but doesn't eliminate that.
+  }, [applyLoadedState, mirrorToLocalStorage]);
 
   // --- Auto-save with debounce ---
   const saveToKV = useCallback(async (ps, so, po, sm, cs) => {
@@ -1251,33 +1330,108 @@ export default function App() {
       const res = await fetch("/api/state", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pageStates: ps, sectionOrder: so, pageOrder: po, sectionMeta: sm, customSections: cs }),
+        body: JSON.stringify({
+          pageStates: ps,
+          sectionOrder: so,
+          pageOrder: po,
+          sectionMeta: sm,
+          customSections: cs,
+        }),
       });
+
       if (res.ok) {
         setSaveStatus("saved");
+        // Mirror successful save to localStorage as a read-only fallback for next load.
+        mirrorToLocalStorage({
+          pageStates: ps,
+          sectionOrder: so,
+          pageOrder: po,
+          sectionMeta: sm,
+          customSections: cs,
+        });
       } else if (res.status === 409) {
-        console.error("Save blocked: data loss prevention triggered");
+        // Server-side data-loss guard — last line of defense against catastrophic shrinkage.
+        const body = await res.json().catch(() => ({}));
+        console.error("Save blocked: data_loss_guard", body);
         setSaveStatus("error");
+        setSaveBlockError({
+          kind: "data_loss",
+          existingScore: body.existingScore ?? null,
+          newScore: body.newScore ?? null,
+        });
+      } else if (res.status === 413) {
+        // Payload too large — Upstash KV cap. Block auto-save and surface a modal so the
+        // user knows further keystrokes won't help. Same dialog plumbing as the 409 path.
+        const body = await res.json().catch(() => ({}));
+        console.error("Save blocked: payload_too_large", body);
+        setSaveStatus("error");
+        setSaveBlockError({
+          kind: "payload_too_large",
+          message: body.message || "Your review data exceeds the server's size limit.",
+        });
+      } else if (res.status === 400) {
+        // Validation failure — most likely a client bug shipping a malformed body. Block
+        // auto-save and show the validation message so we don't hammer the API.
+        const body = await res.json().catch(() => ({}));
+        console.error("Save blocked: invalid_body", body);
+        setSaveStatus("error");
+        setSaveBlockError({
+          kind: "invalid_body",
+          message: body.message || "The server rejected the request body as invalid.",
+        });
       } else {
+        // 500 / network — surface as the chip; auto-save will retry on next change. We
+        // intentionally don't modal-block here because the user can usually recover by
+        // waiting (transient KV outage) or clicking the manual Save button.
         setSaveStatus("error");
       }
-    } catch {
+    } catch (err) {
+      console.error("Save failed:", err);
       setSaveStatus("error");
     }
-  }, []);
+  }, [mirrorToLocalStorage]);
 
   useEffect(() => {
+    // Always cancel any pending debounced save on dependency change. This prevents
+    // a queued save from firing after a guard transitions us into an error state.
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
     if (!loaded) return;
+    if (loadError) return; // Never save while load is broken.
+    if (saveBlockError) return; // Never save while the data-loss guard is active — user must resolve.
     if (skipNextSave.current) {
       skipNextSave.current = false;
       return;
     }
-    if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       saveToKV(pageStates, sectionOrder, pageOrder, sectionMeta, customSections);
     }, 2000);
-    return () => clearTimeout(saveTimer.current);
-  }, [pageStates, sectionOrder, pageOrder, sectionMeta, customSections, loaded, saveToKV]);
+    return () => {
+      if (saveTimer.current) {
+        clearTimeout(saveTimer.current);
+        saveTimer.current = null;
+      }
+    };
+  }, [pageStates, sectionOrder, pageOrder, sectionMeta, customSections, loaded, loadError, saveBlockError, saveToKV]);
+
+  // Restore from the localStorage mirror when KV is unreachable. Read-only:
+  // applies the state and hides the load-error dialog, but loadError stays set
+  // so the auto-save effect remains blocked. A persistent banner shows so the
+  // user understands they're viewing a local copy and can't edit.
+  const loadFromMirror = useCallback(() => {
+    try {
+      const raw = localStorage.getItem("review-state-mirror");
+      if (!raw) return;
+      const data = JSON.parse(raw);
+      applyLoadedState(data);
+      setViewingMirror(true);
+      setLoaded(true); // render the app shell with mirrored data
+    } catch (err) {
+      console.error("Failed to read localStorage mirror:", err);
+    }
+  }, [applyLoadedState]);
 
   // --- Update section metadata ---
   const updateSectionMeta = useCallback((sectionId, meta) => {
@@ -1348,11 +1502,16 @@ export default function App() {
   );
 
   // --- Update a page's state ---
-  const updatePageState = useCallback((pageId, state) => {
-    setPageStates((prev) => ({
-      ...prev,
-      [pageId]: { ...prev[pageId], ...state },
-    }));
+  const updatePageState = useCallback((pageId, stateOrUpdater) => {
+    setPageStates((prev) => {
+      const prevPage = prev[pageId] || {};
+      const patch =
+        typeof stateOrUpdater === "function" ? stateOrUpdater(prevPage) : stateOrUpdater;
+      return {
+        ...prev,
+        [pageId]: { ...prevPage, ...patch },
+      };
+    });
   }, []);
 
   // --- Reorder sections ---
@@ -1459,21 +1618,54 @@ export default function App() {
     window.open("/api/backup", "_blank");
   };
 
+  // Validate the shape of an uploaded backup file. Mirrors the server-side validateBody —
+  // we want to catch corrupt or wrong-shape JSON BEFORE it reaches React state and gets
+  // auto-saved to KV. Returns null if valid, or an error string.
+  const validateBackupShape = (data) => {
+    if (!data || typeof data !== "object" || Array.isArray(data)) {
+      return "Backup file is not a JSON object.";
+    }
+    const fields = ["pageStates", "sectionOrder", "pageOrder", "sectionMeta", "customSections"];
+    for (const f of fields) {
+      const v = data[f];
+      if (v == null) continue;
+      if (typeof v !== "object" || Array.isArray(v)) {
+        return `Backup field "${f}" must be an object.`;
+      }
+    }
+    if (data.pageStates) {
+      for (const [pid, ps] of Object.entries(data.pageStates)) {
+        if (!ps || typeof ps !== "object" || Array.isArray(ps)) {
+          return `Backup pageStates["${pid}"] is not an object.`;
+        }
+      }
+    }
+    return null;
+  };
+
   const handleRestore = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (ev) => {
+      let data;
       try {
-        const data = JSON.parse(ev.target.result);
-        if (data.pageStates) setPageStates(data.pageStates);
-        if (data.sectionOrder) setSectionOrder(data.sectionOrder);
-        if (data.pageOrder) setPageOrder(data.pageOrder);
-        if (data.sectionMeta) setSectionMeta(data.sectionMeta);
-        if (data.customSections) setCustomSections(data.customSections);
+        data = JSON.parse(ev.target.result);
       } catch (err) {
-        console.error("Invalid backup file:", err);
+        console.error("Restore failed (invalid JSON):", err);
+        alert("Restore failed: the file is not valid JSON.");
+        return;
       }
+      const validationError = validateBackupShape(data);
+      if (validationError) {
+        console.error("Restore failed (invalid shape):", validationError);
+        alert(`Restore failed: ${validationError}`);
+        return;
+      }
+      // Use applyLoadedState so defaults and skipNextSave are handled centrally.
+      applyLoadedState(data);
+      // Force the next dependency-change save to fire so the user sees the restore reach KV.
+      skipNextSave.current = false;
     };
     reader.readAsText(file);
     e.target.value = "";
@@ -1490,21 +1682,22 @@ export default function App() {
         setSaveStatus("error");
         return;
       }
-      // Reload state from KV
-      skipNextSave.current = true;
+      // Reload state from KV via applyLoadedState — handles defaults and skipNextSave.
       const fresh = await fetch("/api/state");
+      if (!fresh.ok) {
+        console.error("Auto-restore: fresh fetch returned", fresh.status);
+        alert(`Restore succeeded server-side but reload failed (HTTP ${fresh.status}). Reload the page manually.`);
+        setSaveStatus("error");
+        return;
+      }
       const freshData = await fresh.json();
-      if (freshData.pageStates) setPageStates(freshData.pageStates);
-      if (freshData.sectionOrder) setSectionOrder(freshData.sectionOrder);
-      if (freshData.pageOrder) setPageOrder(freshData.pageOrder);
-      if (freshData.sectionMeta) setSectionMeta(freshData.sectionMeta);
-      if (freshData.customSections) setCustomSections(freshData.customSections);
+      applyLoadedState(freshData);
       setSaveStatus("saved");
     } catch (err) {
       console.error("Auto-restore failed:", err);
       setSaveStatus("error");
     }
-  }, []);
+  }, [applyLoadedState]);
 
   // --- Compute active sections and pages (merge custom pages into section objects) ---
   const tabKey = ["site", "outreach", "annotations"][tab] || "site";
@@ -1552,14 +1745,15 @@ export default function App() {
   );
 
   // --- Save status indicator ---
+  // Darker hex values chosen to meet WCAG AA on light chip backgrounds.
   const saveIndicator = useMemo(() => {
     switch (saveStatus) {
       case "saving":
-        return <Chip icon={<SyncIcon sx={{ fontSize: 16 }} />} label="Saving..." size="small" sx={{ bgcolor: "#FFF3E0", color: "#E65100" }} />;
+        return <Chip icon={<SyncIcon sx={{ fontSize: 16 }} />} label="Saving..." size="small" sx={{ bgcolor: "#FFF3E0", color: "#BF360A" }} />;
       case "saved":
-        return <Chip icon={<CheckCircleIcon sx={{ fontSize: 16 }} />} label="Saved" size="small" sx={{ bgcolor: "#E8F5E9", color: "#2E7D32" }} />;
+        return <Chip icon={<CheckCircleIcon sx={{ fontSize: 16 }} />} label="Saved" size="small" sx={{ bgcolor: "#E8F5E9", color: "#1B5E20" }} />;
       case "error":
-        return <Chip icon={<ErrorIcon sx={{ fontSize: 16 }} />} label="Save failed" size="small" sx={{ bgcolor: "#FFEBEE", color: "#D32F2F" }} />;
+        return <Chip icon={<ErrorIcon sx={{ fontSize: 16 }} />} label="Save failed" size="small" sx={{ bgcolor: "#FFEBEE", color: "#B71C1C" }} />;
       default:
         return null;
     }
@@ -1577,6 +1771,40 @@ export default function App() {
         </Typography>
       </Box>
 
+      {viewingMirror && (
+        <Alert
+          severity="warning"
+          action={
+            <Button color="inherit" size="small" onClick={() => window.location.reload()}>
+              Reload page
+            </Button>
+          }
+          sx={{ mb: 2 }}
+        >
+          <strong>Read-only mode.</strong> You're viewing a local backup because the server is unreachable. All controls below are disabled and edits will not save.
+        </Alert>
+      )}
+
+      {/* All interactive content is wrapped so we can disable it via the `inert` attribute
+          when viewingMirror is true. inert disables pointer events, removes the subtree
+          from the tab order, and excludes it from the accessibility tree — the correct
+          way to enforce a read-only mode without scattering disabled props everywhere.
+          We use a ref-based DOM attribute set because React's prop handling for `inert`
+          varies across versions and we want a guaranteed-rendered attribute. */}
+      <Box
+        ref={(el) => {
+          if (!el) return;
+          if (viewingMirror) el.setAttribute("inert", "");
+          else el.removeAttribute("inert");
+        }}
+        sx={{
+          opacity: viewingMirror ? 0.55 : 1,
+          transition: "opacity 0.2s",
+          // Belt-and-suspenders: even if a browser ignores `inert`, kill pointer events.
+          pointerEvents: viewingMirror ? "none" : "auto",
+          userSelect: viewingMirror ? "text" : "auto",
+        }}
+      >
       {/* Toolbar */}
       <Paper variant="outlined" sx={{ p: 2, mb: 3 }}>
         <Stack direction={{ xs: "column", sm: "row" }} spacing={2} alignItems={{ sm: "center" }}>
@@ -1849,6 +2077,106 @@ export default function App() {
       </Typography>
       </>
       )}
+      </Box>{/* end inert wrapper */}
+
+      {/* Load-error blocking dialog — editing is gated behind this until the user reloads */}
+      <Dialog
+        open={!!loadError && !viewingMirror}
+        disableEscapeKeyDown
+        maxWidth="sm"
+        fullWidth
+        aria-labelledby="load-error-title"
+        aria-describedby="load-error-description"
+      >
+        <DialogTitle id="load-error-title" sx={{ fontWeight: 700, color: "error.dark" }}>
+          Could not load review data
+        </DialogTitle>
+        <DialogContent id="load-error-description">
+          <Alert severity="error" sx={{ mb: 2 }}>
+            Editing is disabled to protect your existing data from being overwritten.
+          </Alert>
+          <DialogContentText sx={{ mb: 1, color: "text.primary" }}>
+            {loadError?.message}
+          </DialogContentText>
+          {loadError?.detail && (
+            <DialogContentText sx={{ fontSize: 13, color: "text.primary", opacity: 0.8 }}>
+              {loadError.detail}
+            </DialogContentText>
+          )}
+          {loadError?.hasMirror ? (
+            <Alert severity="info" sx={{ mt: 2 }}>
+              A local backup from your last successful save exists. You can view it in
+              read-only mode while the server is unreachable.
+            </Alert>
+          ) : (
+            <Alert severity="warning" sx={{ mt: 2 }}>
+              No local backup is available on this device. Reload the page to retry — if
+              the problem persists, check the server status or contact your admin before
+              making any edits.
+            </Alert>
+          )}
+        </DialogContent>
+        <DialogActions>
+          {loadError?.hasMirror && (
+            <Button onClick={loadFromMirror}>
+              View local backup (read-only)
+            </Button>
+          )}
+          <Button onClick={() => window.location.reload()} variant="contained" autoFocus>
+            Reload page
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Save-blocked dialog — covers all unrecoverable save failures (409 data-loss guard,
+          413 payload too large, 400 invalid body). Auto-save is paused via the saveBlockError
+          gate in the auto-save effect until the user reloads. */}
+      <Dialog
+        open={!!saveBlockError && !loadError}
+        disableEscapeKeyDown
+        maxWidth="sm"
+        fullWidth
+        aria-labelledby="save-block-title"
+        aria-describedby="save-block-description"
+      >
+        <DialogTitle id="save-block-title" sx={{ fontWeight: 700, color: "error.dark" }}>
+          {saveBlockError?.kind === "payload_too_large"
+            ? "Save blocked — data too large"
+            : saveBlockError?.kind === "invalid_body"
+            ? "Save blocked — invalid request"
+            : "Save blocked — possible data loss detected"}
+        </DialogTitle>
+        <DialogContent id="save-block-description">
+          <Alert severity="error" sx={{ mb: 2 }}>
+            {saveBlockError?.kind === "payload_too_large"
+              ? "Your review data exceeds the server's size limit. Auto-save is paused so you don't lose work."
+              : saveBlockError?.kind === "invalid_body"
+              ? "The server rejected the request as invalid. This usually means a client bug. Auto-save is paused."
+              : "The server refused to save because the new data is dramatically smaller than what's already stored. Auto-save is paused."}
+          </Alert>
+          {saveBlockError?.kind === "data_loss" || !saveBlockError?.kind ? (
+            <>
+              <DialogContentText sx={{ mb: 1, color: "text.primary" }}>
+                {saveBlockError?.existingScore != null && saveBlockError?.newScore != null && (
+                  <>Existing data score: <strong>{saveBlockError.existingScore}</strong> · New data score: <strong>{saveBlockError.newScore}</strong></>
+                )}
+              </DialogContentText>
+              <DialogContentText sx={{ fontSize: 13, color: "text.primary", opacity: 0.8 }}>
+                Reload the page to pull the latest saved data from the server. If that looks right, you can resume editing. If something looks wrong, use "Undo Last Save" or "Restore" from the toolbar.
+              </DialogContentText>
+            </>
+          ) : (
+            <DialogContentText sx={{ fontSize: 13, color: "text.primary", opacity: 0.8 }}>
+              {saveBlockError?.message} Use "Backup" to download your current state, then reload the page and contact your admin.
+            </DialogContentText>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => window.location.reload()} variant="contained" autoFocus>
+            Reload page
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }
